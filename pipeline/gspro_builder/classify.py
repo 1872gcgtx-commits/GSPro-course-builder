@@ -211,6 +211,55 @@ def _smooth_mask(m, sigma_px=2.0):
     return ndimage.gaussian_filter(m.astype(np.float32), sigma_px) > 0.5
 
 
+def refine_paths(G, prob, aux, holes, log=print):
+    """Line of play per hole: least-cost route tee -> green through the classified
+    land cover (mown turf cheap, centre of the fairway cheapest; rough dearer; trees
+    much dearer; water/buildings ~blocked), simplified to <= 2 dog-leg aim points.
+    Returns {hole.number: [tee, aim..., green]} in local metres."""
+    from skimage.graph import route_through_array
+    from skimage.measure import approximate_polygon
+    I = {c: i for i, c in enumerate(CLASSES)}
+    pm, pt = prob[..., I["mown"]], prob[..., I["trees"]]
+    blocked = (prob[..., I["water"]] > 0.5) | aux["lb"]
+    mown = pm > 0.5
+    inside = ndimage.distance_transform_edt(mown) * G.res            # metres from the fairway edge
+    cost = 1.0 + 4.0 * (1 - pm) + 30.0 * pt + 400.0 * blocked
+    cost = cost + 2.5 / (1.0 + inside / 6.0) * mown                  # prefer the middle of the turf
+    out = {}
+    for h in holes:
+        tee, green = h.path[0], h.path[-1]
+        L = math.dist(tee, green)
+        if (h.par or 4) < 4 or L < 180:
+            out[h.number] = [tee, green]
+            continue
+        pad = max(70.0, 0.4 * L)
+        (tr, tc), (gr, gc) = G.rc(*tee), G.rc(*green)
+        r0 = max(0, min(tr, gr) - int(pad / G.res)); r1 = min(G.shape[0], max(tr, gr) + int(pad / G.res))
+        c0 = max(0, min(tc, gc) - int(pad / G.res)); c1 = min(G.shape[1], max(tc, gc) + int(pad / G.res))
+        sub = cost[r0:r1, c0:c1]
+        step = 2                                                        # route on a 1 m grid for speed
+        sub2 = sub[::step, ::step]
+        a = ((tr - r0) // step, (tc - c0) // step)
+        b = ((gr - r0) // step, (gc - c0) // step)
+        try:
+            idx, _ = route_through_array(sub2, a, b, fully_connected=True, geometric=True)
+        except Exception:
+            out[h.number] = [tee, green]
+            continue
+        pts = np.array([G.xz(r0 + r * step, c0 + c * step) for r, c in idx])
+        simp = approximate_polygon(pts, tolerance=7.0)
+        # keep the interior vertices that really bend the hole (>12 m off the straight line)
+        from .layout import point_segment_dist
+        inner = [tuple(v) for v in simp[1:-1] if point_segment_dist(tuple(v), tee, green) > 12.0]
+        inner.sort(key=lambda v: -point_segment_dist(v, tee, green))
+        inner = inner[:2]
+        inner.sort(key=lambda v: math.dist(tee, v))
+        out[h.number] = [tee] + [(round(x, 1), round(z, 1)) for x, z in inner] + [green]
+    bent = sum(1 for v in out.values() if len(v) > 2)
+    log(f"  line of play: {bent} of {len(holes)} holes bend (dog-legs)")
+    return out
+
+
 class _Win:
     """Adapter so autodraft._polygon can turn grid masks into local-metre rings."""
 
@@ -224,6 +273,18 @@ class _Win:
 def draft_v2(cfg, holes, log=print) -> list[dict]:
     G, feats, aux = build_features(cfg, log)
     cls, prob, dline = train_and_classify(G, feats, aux, holes, log=log)
+    # follow dog-legs: re-route each hole along its fairway, then partition on those lines
+    import copy
+    paths = refine_paths(G, prob, aux, holes, log=log)
+    orig = {h.number: list(h.path) for h in holes}
+    holes = [copy.copy(h) for h in holes]
+    for h in holes:
+        if len(orig[h.number]) == 2:          # keep any aim points the owner already placed
+            h.path = paths[h.number]
+    allline = np.zeros(G.shape, bool)
+    for h in holes:
+        allline |= _line_mask(G, _sub_path(h.path, 0, 1, 2.0), 1.0)
+    dline = ndimage.distance_transform_edt(~allline) * G.res
     part = _hole_partition(G, holes)
     P = _Win(G)
     full = (slice(0, G.shape[0]), slice(0, G.shape[1]))
@@ -417,6 +478,7 @@ def draft_v2(cfg, holes, log=print) -> list[dict]:
                     "nine_hole": int(best.props.get("nine_hole", 0) or 0)})
         wi += 1
     log(f"  drafted {len(out)} shapes ({wi} water bodies)")
+    draft_v2.paths = {h.number: [list(p) for p in h.path] for h in holes}
     np.save(cfg.data_dir / "landcover.npy", cls)
     (cfg.data_dir / "landcover.json").write_text(json.dumps({"classes": CLASSES, "r0": G.r0, "c0": G.c0,
                                                               "res": G.res}))
