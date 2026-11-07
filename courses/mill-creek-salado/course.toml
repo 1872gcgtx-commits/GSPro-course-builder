@@ -3,11 +3,17 @@ name = "Mill Creek Golf Club (Salado, TX)"
 slug = "mill-creek-salado"
 tee_sets = ["Blue", "White", "Red"]   # Mill Creek card
 
+# Property outline (traced by the course owner); trees and QA are limited to it
+boundary = [[-97.523671, 30.962331], [-97.50312, 30.961898], [-97.500702, 30.959508],
+            [-97.500782, 30.954342], [-97.498705, 30.952103], [-97.498512, 30.946196],
+            [-97.503362, 30.946351], [-97.51589, 30.948463], [-97.527308, 30.948594],
+            [-97.529855, 30.950001], [-97.528067, 30.954902]]
+
 [terrain]
 # Square terrain tile centred here, axis-aligned to the local UTM grid.
-center_lat = 30.95525
-center_lon = -97.5155
-size_m = 2400.0            # cover the whole property plus ~100 m
+center_lat = 30.954299         # centre of the 27-hole property outline
+center_lon = -97.514087
+size_m = 3300              # property spans 3.0 km E-W x 1.76 km N-S
 heightmap_res = 4097       # 513 | 1025 | 2049 | 4097  (4097 over 2000 m = 0.49 m spacing)
 dem_res_m = 0.5            # LiDAR ground grid; greens/bunkers need <= 0.5 m
 splat_res = 4096

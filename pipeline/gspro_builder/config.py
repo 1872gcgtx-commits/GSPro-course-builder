@@ -36,6 +36,7 @@ class CourseConfig:
     foliage: dict = field(default_factory=dict)      # -> FoliageConfig (+ "source")
     mesh_offset_m: float = 0.0
     nine_names: dict = field(default_factory=dict)   # {1: "Creek 1", ...}
+    boundary: list = field(default_factory=list)     # property outline [[lon, lat], ...]
     routings: list = field(default_factory=list)     # [{name, front, back}]; empty = every pair
 
     @property
@@ -82,6 +83,7 @@ def load_config(path: str | Path) -> CourseConfig:
         foliage=dict(raw.get("foliage", {})),
         mesh_offset_m=float(raw.get("meshes", {}).get("offset_m", 0.0)),
         nine_names={int(k): str(v) for k, v in raw.get("nines", {}).items()},
+        boundary=[[float(a), float(b)] for a, b in c.get("boundary", [])],
         routings=[{"name": r["name"], "front": int(r["front"]), "back": int(r["back"])}
                   for r in raw.get("routing", [])],
     )

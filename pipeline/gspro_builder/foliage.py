@@ -37,6 +37,7 @@ class FoliageConfig:
     conifer_ratio: float = 0.2
     keep_clear_m: float = 1.0           # around playing surfaces
     scatter_spacing_m: float = 7.0      # fallback without LiDAR
+    boundary_margin_m: float = 80.0     # keep trees this far outside the property outline
     seed: int = 7
 
     @classmethod
@@ -160,6 +161,18 @@ def _set_y(trees, dem, base_elev):
         ys = dem.sample(xs, zs) - base_elev
         for t, y in zip(trees, ys):
             t["x"], t["z"], t["y"] = round(t["x"], 2), round(t["z"], 2), round(float(y), 3)
+
+
+def clip_to_boundary(trees: list[dict], boundary_local: list, margin_m: float) -> list[dict]:
+    """Keep trees inside the property outline or within margin_m of it."""
+    if not trees or len(boundary_local) < 3:
+        return trees
+    from scipy.spatial import cKDTree
+    from .course_meshes import _densify, points_in_ring
+    pts = np.array([(t["x"], t["z"]) for t in trees])
+    inside = points_in_ring(pts, boundary_local)
+    near = cKDTree(_densify(boundary_local, 2.0)).query(pts)[0] <= margin_m
+    return [t for t, keep in zip(trees, inside | near) if keep]
 
 
 def write_trees_csv(trees: list[dict], path: Path) -> None:

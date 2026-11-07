@@ -144,6 +144,12 @@ def build(cfg: CourseConfig) -> dict:
             trees = scatter_trees(layout, dem, base, fcfg)
         else:
             warnings.append("foliage source 'lidar' requested but no LiDAR canopy (chm.npy)")
+    if cfg.boundary:
+        from .foliage import clip_to_boundary
+        before = len(trees)
+        ring = [cfg.frame.to_local(lon, lat) for lon, lat in cfg.boundary]
+        trees = clip_to_boundary(trees, ring, fcfg.boundary_margin_m)
+        log(f"trees: kept {len(trees)} of {before} inside the property outline (+{fcfg.boundary_margin_m:g} m)")
     write_trees_csv(trees, out / "trees.csv")
     log(f"trees: {len(trees)}")
 
