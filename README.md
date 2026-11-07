@@ -1,22 +1,28 @@
 # GSPro Course Builder
 
-Builds local golf courses for GSPro from public data. The pipeline downloads real
-elevation (USGS 3DEP LiDAR DEM), aerial imagery (USDA NAIP) and the course layout
-(OpenStreetMap plus your own traces). From those it produces everything the GSPro/OPCD
-toolchain needs:
+Builds local golf courses for GSPro (Unity 6 / OPCD V4) from public data. The
+pipeline streams the USGS 3DEP LiDAR point cloud, USDA NAIP imagery and the
+OpenStreetMap layout (plus your own traces) and produces:
 
-* a 16-bit Unity terrain heightmap and an OBJ terrain mesh
-* surface splat maps (fairway, green, tee, bunker, water, rough, trees, cart path)
-* an OPCD-style Inkscape SVG with Hole01..HoleNN layers and an aerial image layer
-* hole data: tees per tee-set, pins, aim points, yardages and par (`holes.json`, `greenkeeper.csv`)
+* **Elevation**: a 0.5 m LiDAR ground model, graded into a 16-bit Unity heightmap
+  and an OBJ terrain mesh
+* **Grading**: level tee pads, de-noised greens with their contours kept, carved or
+  kept bunkers with lips, flat water with banks and a sloped bed, all feathered so
+  there are no seams
+* **Surfaces**: 10 terrain layers with fairway → first cut → rough and
+  green → fringe transitions
+* **Course meshes**: `Hole##_Green/Tee/Fairway/Bunker` and water planes, conformed to
+  the graded terrain
+* **Foliage**: individual trees (deciduous or conifer, height and crown size) from the
+  LiDAR canopy
+* **Holes**: tees per tee set, front/middle/back pins on the flattest parts of each
+  green, aim points, yardage
+* an OPCD-style Inkscape SVG and a QA report
 
-It also includes a **Unity 6 editor package** that loads all of this into a scene so you
-can preview and edit the course.
-
-> **Important:** GSPro's course build still runs on the OPCD toolchain, which uses
-> **Unity 2018.2.8f1**, Blender 4.2 and GreenKeeper. Unity 6 here is the preview and
-> design environment. See [docs/PIPELINE.md](docs/PIPELINE.md) for the full process,
-> the tools and the access checklist.
+The **Unity 6 editor package** imports all of this, including terrain, trees, water,
+meshes and hole markers. It works in Built-in, URP or HDRP, inside the OPCD V4 Unity 6
+project. See [docs/PIPELINE.md](docs/PIPELINE.md) for the full process, the tools and
+the access checklist.
 
 ## Quick start
 
@@ -43,10 +49,13 @@ Unity 6: Package Manager ▸ **+** ▸ *Add package from disk* ▸
 ## Layout
 
 ```
-pipeline/gspro_builder/   Python pipeline (numpy, Pillow, requests; rasterio optional)
-  sources/                USGS 3DEP, NAIP, OpenStreetMap/Overpass clients
-  terrain.py mesh.py      heightmap RAW / OBJ
-  surfaces.py             splat maps
+pipeline/gspro_builder/   Python pipeline (numpy, scipy, Pillow, laspy, pyproj)
+  sources/                LiDAR (USGS EPT / .laz), 3DEP DEM, NAIP, OpenStreetMap clients
+  grading.py              tees, greens, fairways, bunkers, water
+  terrain.py mesh.py      heightmap RAW / terrain OBJ
+  surfaces.py             splat maps incl. fringe / first cut
+  course_meshes.py        conformed surface meshes + water planes
+  foliage.py              LiDAR tree detection
   svg_opcd.py             OPCD Inkscape SVG
   holes.py                tees/pins/aim points/yardage
 unity/com.local.gspro-course-builder/   Unity 6 editor package (import + hole marker export)

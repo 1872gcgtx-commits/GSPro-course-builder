@@ -89,7 +89,7 @@ class DemoBuildTest(unittest.TestCase):
         cls.tmp.cleanup()
 
     def test_outputs_exist(self):
-        for rel in ["terrain/heightmap_1025.raw", "terrain/terrain.json", "terrain/terrain.obj",
+        for rel in ["terrain/heightmap_2049.raw", "terrain/terrain.json", "terrain/terrain.obj",
                     "surfaces/splat_control0.png", "surfaces/splat_control1.png", "holes.json",
                     "greenkeeper.csv", "demo_opcd.svg", "overlay.jpg", "build_report.json"]:
             self.assertTrue((self.out / rel).exists(), rel)
@@ -102,9 +102,8 @@ class DemoBuildTest(unittest.TestCase):
         self.assertGreater(tj["height_range_m"], 10)
 
     def test_splat_weights_sum_to_one(self):
-        a = np.asarray(Image.open(self.out / "surfaces/splat_control0.png"), dtype=int)
-        b = np.asarray(Image.open(self.out / "surfaces/splat_control1.png"), dtype=int)
-        total = a.sum(-1) + b.sum(-1)
+        total = sum(np.asarray(Image.open(self.out / f"surfaces/splat_control{k}.png"), dtype=int).sum(-1)
+                    for k in range(3))
         self.assertTrue(np.all(np.abs(total - 255) <= 4))
 
     def test_holes(self):

@@ -31,6 +31,49 @@ def estimate_par(yards: float) -> int:
     return 3 if yards <= 250 else 4 if yards <= 470 else 5
 
 
+def pin_positions(green: Surface, approach_from, dem: DEM, max_slope: float = 0.025,
+                  min_edge_m: float = 3.5, step: float = 0.5) -> dict:
+    """Front / middle / back hole locations on the flattest parts of the green.
+
+    Candidates sit at least `min_edge_m` inside the edge, on slope <= max_slope
+    (relaxed if the green has no such area). Front/middle/back are the 20th/50th/
+    80th percentile along the line of play; among nearby candidates the flattest wins.
+    """
+    import numpy as np
+    from scipy.spatial import cKDTree
+    from .course_meshes import _densify, points_in_ring
+    ring = np.asarray(green.rings[0])
+    xs = np.arange(ring[:, 0].min(), ring[:, 0].max(), step)
+    zs = np.arange(ring[:, 1].min(), ring[:, 1].max(), step)
+    gx, gz = np.meshgrid(xs, zs)
+    pts = np.column_stack([gx.ravel(), gz.ravel()])
+    pts = pts[points_in_ring(pts, green.rings[0])]
+    if len(pts) == 0:
+        return {}
+    edge = cKDTree(_densify(green.rings[0], 0.25)).query(pts)[0]
+    e = 0.5
+    sx = (dem.sample_smooth(pts[:, 0] + e, pts[:, 1]) - dem.sample_smooth(pts[:, 0] - e, pts[:, 1])) / (2 * e)
+    sz = (dem.sample_smooth(pts[:, 0], pts[:, 1] + e) - dem.sample_smooth(pts[:, 0], pts[:, 1] - e)) / (2 * e)
+    slope = np.hypot(sx, sz)
+    for edge_req, slope_req in ((min_edge_m, max_slope), (min_edge_m * 0.6, max_slope * 1.5), (0, 1e9)):
+        ok = (edge >= edge_req) & (slope <= slope_req)
+        if ok.sum() >= 3:
+            break
+    cand, cslope = pts[ok], slope[ok]
+    c = np.asarray(green.centroid)
+    d = c - np.asarray(approach_from)
+    d = d / max(np.linalg.norm(d), 1e-6)
+    along = (cand - c) @ d
+    out = {}
+    for name, q in (("front", 20), ("middle", 50), ("back", 80)):
+        target = np.percentile(along, q)
+        near = np.abs(along - target) <= max(1.5, 0.1 * (along.max() - along.min()))
+        idx = np.flatnonzero(near)
+        best = idx[np.argmin(cslope[idx] + 0.002 * np.abs(along[idx] - target))]
+        out[name] = (tuple(cand[best]), float(cslope[best]))
+    return out
+
+
 def _surfaces(layout: Layout, kind: str, hole: int) -> list[Surface]:
     return [s for s in layout.surfaces if s.kind == kind and s.hole == hole]
 
@@ -42,12 +85,16 @@ def build_holes(layout: Layout, dem: DEM, base_elev: float, tee_sets: list[str])
     for h in layout.holes:
         greens = _surfaces(layout, "green", h.number)
         green = min(greens, key=lambda g: math.dist(g.centroid, h.path[-1])) if greens else None
+        aims = h.path[1:-1]
+        approach = (aims or h.path[:1])[-1]
+        pins = pin_positions(green, approach, dem) if green is not None else {}
         pin = next((p for p, n in layout.pins if n == h.number), None)
         if pin is None and green is not None:
             pin = next((p for p, n in layout.pins if n is None and point_in_ring(p, green.rings[0])), None)
+        if pin is None and pins:
+            pin = pins["middle"][0]
         if pin is None:
             pin = green.centroid if green and point_in_ring(green.centroid, green.rings[0]) else h.path[-1]
-        aims = h.path[1:-1]
 
         tee_boxes = _surfaces(layout, "tee", h.number)
         tee_pts = sorted((t.centroid for t in tee_boxes),
@@ -66,6 +113,8 @@ def build_holes(layout: Layout, dem: DEM, base_elev: float, tee_sets: list[str])
             "handicap": h.handicap or 0,
             "tees": tees,
             "pin": v3(pin),
+            "pin_positions": [{"name": k, "position": v3(p), "slope_pct": round(sl * 100, 2)}
+                              for k, (p, sl) in pins.items()],
             "aim_points": [v3(a) for a in aims],
             "green_center": v3(green.centroid) if green else v3(pin),
             "elevation_change_m": round(y(pin) - tees[0]["position"]["y"], 2),

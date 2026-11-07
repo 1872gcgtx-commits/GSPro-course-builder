@@ -58,19 +58,32 @@ class DEM:
         self.res_m = frame.size_m / data.shape[0]
 
     def sample(self, x, z):
-        """Elevation at local coordinates (scalars or arrays)."""
+        """Elevation at local coordinates (scalars or arrays), bilinear."""
         h = self.frame.size_m / 2
         x, z = np.asarray(x, dtype=np.float64), np.asarray(z, dtype=np.float64)
         col = (x + h) / self.res_m - 0.5
         row = (h - z) / self.res_m - 0.5
         return bilinear(self.data, col, row)
 
+    def sample_smooth(self, x, z):
+        """Cubic-spline elevation (no facets between DEM cells) for heightmaps and meshes."""
+        from scipy import ndimage
+        if getattr(self, "_coef", None) is None:
+            self._coef = ndimage.spline_filter(self.data.astype(np.float64), order=3, mode="nearest")
+        h = self.frame.size_m / 2
+        x, z = np.asarray(x, dtype=np.float64), np.asarray(z, dtype=np.float64)
+        col = (x + h) / self.res_m - 0.5
+        row = (h - z) / self.res_m - 0.5
+        out = ndimage.map_coordinates(self._coef, [row.ravel(), col.ravel()], order=3,
+                                      mode="nearest", prefilter=False)
+        return out.reshape(np.shape(x))
+
     def heightmap(self, n: int) -> np.ndarray:
         """N x N float elevations, row 0 = south."""
         h = self.frame.size_m / 2
         coords = -h + np.arange(n) * (self.frame.size_m / (n - 1))
         xx, zz = np.meshgrid(coords, coords)       # zz[i, :] = south..north
-        return self.sample(xx, zz)
+        return self.sample_smooth(xx, zz)
 
 
 def write_heightmap(dem: DEM, n: int, out_dir: Path, name: str = "heightmap") -> TerrainInfo:

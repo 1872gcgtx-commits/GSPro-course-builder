@@ -14,7 +14,12 @@ namespace GSProCourseBuilder.Editor
     }
 
     [Serializable] public class SurfaceLayerJson { public int index; public string name; public string control_map; public string channel; }
-    [Serializable] public class SurfacesJson { public int resolution; public float size_m; public string row_order; public SurfaceLayerJson[] layers; }
+    [Serializable] public class SurfacesJson { public int resolution; public float size_m; public string row_order; public int control_maps; public SurfaceLayerJson[] layers; }
+
+    [Serializable] public class WaterBodyJson { public string name; public int hole; public float level_y; public V3[] vertices; public int[] triangles; }
+    [Serializable] public class WaterJson { public float base_elev_m; public WaterBodyJson[] bodies; }
+
+    [Serializable] public class PinPositionJson { public string name; public V3 position; public float slope_pct; }
 
     [Serializable] public class V3
     {
@@ -35,6 +40,7 @@ namespace GSProCourseBuilder.Editor
         public int handicap;
         public TeeJson[] tees;
         public V3 pin;
+        public PinPositionJson[] pin_positions;
         public V3[] aim_points;
         public V3 green_center;
         public float elevation_change_m;

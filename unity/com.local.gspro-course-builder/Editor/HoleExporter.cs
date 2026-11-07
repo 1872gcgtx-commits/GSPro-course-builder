@@ -43,6 +43,9 @@ namespace GSProCourseBuilder.Editor
                         yards = Mathf.RoundToInt(r.YardsFrom(t)),
                     }).ToArray(),
                     pin = new V3(pin.transform.position),
+                    pin_positions = markers.Where(m => m.kind == MarkerKind.PinPosition)
+                                           .Select(m => new PinPositionJson { name = m.teeName, position = new V3(m.transform.position) })
+                                           .ToArray(),
                     aim_points = markers.Where(m => m.kind == MarkerKind.AimPoint).OrderBy(m => m.order)
                                         .Select(m => new V3(m.transform.position)).ToArray(),
                     green_center = new V3((green ? green : pin).transform.position),

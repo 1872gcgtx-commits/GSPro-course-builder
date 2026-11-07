@@ -2,7 +2,7 @@ using UnityEngine;
 
 namespace GSProCourseBuilder
 {
-    public enum MarkerKind { Tee, Pin, AimPoint, GreenCenter }
+    public enum MarkerKind { Tee, Pin, AimPoint, GreenCenter, PinPosition }
 
     /// <summary>A tee / pin / aim point for one hole. Move these in the Scene view,
     /// then use GSPro Builder > Export Hole Markers to write holes_edited.json.</summary>
@@ -11,7 +11,7 @@ namespace GSProCourseBuilder
     {
         public int hole;
         public MarkerKind kind;
-        public string teeName;     // Tee only
+        public string teeName;     // Tee: tee-set name; PinPosition: front / middle / back
         public int order;          // AimPoint order along the hole
 
         static readonly Color TeeColor = new Color(0.2f, 0.5f, 1f);
@@ -31,6 +31,10 @@ namespace GSProCourseBuilder
                     Gizmos.color = PinColor;
                     Gizmos.DrawLine(p, p + Vector3.up * 2.4f);
                     Gizmos.DrawCube(p + new Vector3(0.3f, 2.2f, 0f), new Vector3(0.6f, 0.4f, 0.05f));
+                    break;
+                case MarkerKind.PinPosition:
+                    Gizmos.color = new Color(1f, 0.5f, 0.5f);
+                    Gizmos.DrawWireSphere(p, 0.6f);
                     break;
                 case MarkerKind.AimPoint:
                     Gizmos.color = AimColor;

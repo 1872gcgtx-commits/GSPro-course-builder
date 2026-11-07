@@ -24,11 +24,16 @@ tee_sets = ["Black", "Blue", "White", "Red"]
 # Square terrain tile centred here, axis-aligned to the local UTM grid.
 center_lat = {lat}
 center_lon = {lon}
-size_m = {size}            # cover the whole property plus a margin
-heightmap_res = 2049       # 513 | 1025 | 2049 | 4097
-dem_res_m = 1.0            # USGS 3DEP is 1 m LiDAR bare-earth in most of the US
-splat_res = 2048
-source = "usgs_3dep"       # or "file" with dem_file = "data/my_lidar_dem.tif" (UTM, metres)
+size_m = {size}            # cover the whole property plus ~100 m
+heightmap_res = 4097       # 513 | 1025 | 2049 | 4097  (4097 over 2000 m = 0.49 m spacing)
+dem_res_m = 0.5            # LiDAR ground grid; greens/bunkers need <= 0.5 m
+splat_res = 4096
+source = "lidar_ept"       # lidar_ept   : USGS 3DEP point cloud streamed from AWS (best)
+                           # lidar_files : your own .laz/.las tiles (lidar_files = ["data/laz/*.laz"])
+                           # usgs_3dep   : 1 m bare-earth DEM only (no trees/water from LiDAR)
+                           # file        : your own DEM GeoTIFF (dem_file = "...")
+# lidar_crs = "EPSG:3735"  # only if your .laz has no CRS
+# lidar_z_units = "auto"   # auto | m | ft | usft
 
 [imagery]
 source = "naip"            # USDA NAIP, public domain; "none" to skip
@@ -37,6 +42,30 @@ resolution_m = 0.5
 [layout]
 source = "osm"             # OpenStreetMap golf=* features; "geojson" to use only your file
 file = "features.geojson"  # your hand-traced additions/overrides (QGIS or geojson.io)
+
+[grading]                  # defaults shown; delete lines you don't change
+tee_max_slope = 0.015      # tee pads levelled to <= 1.5 %
+tee_raise_m = 0.0
+green_smooth_m = 0.6       # removes LiDAR noise, keeps contours
+green_slope_warn = 0.03
+fairway_smooth_m = 0.5
+bunker_mode = "auto"       # auto (keep LiDAR bowl if present) | carve | lidar
+bunker_depth_m = 0.6
+bunker_lip_m = 0.25        # lip on the green-facing side
+water_freeboard_m = 0.3    # water surface below the lowest bank
+water_depth_m = 1.8
+
+[surfaces]
+fringe_width_m = 1.0       # collar around greens
+first_cut_width_m = 2.0    # intermediate rough around fairways
+
+[foliage]
+source = "auto"            # auto (LiDAR canopy, else scatter in `trees` areas) | lidar | scatter | none
+min_height_m = 3.0
+keep_clear_m = 1.0
+
+[meshes]
+offset_m = 0.0             # lift course-surface meshes above terrain (e.g. 0.02) if they z-fight
 """
 
 

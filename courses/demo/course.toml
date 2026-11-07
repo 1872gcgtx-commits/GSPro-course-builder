@@ -6,9 +6,9 @@ slug = "demo"
 center_lat = 40.0
 center_lon = -83.0
 size_m = 1200
-heightmap_res = 1025
-dem_res_m = 1.0
-splat_res = 1024
+heightmap_res = 2049
+dem_res_m = 0.5
+splat_res = 2048
 
 [imagery]
 source = "none"

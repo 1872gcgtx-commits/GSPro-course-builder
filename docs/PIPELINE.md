@@ -1,115 +1,134 @@
 # Building a local course for GSPro: full process, tools and access
 
-## 1. How a GSPro course actually gets built (current state)
+## 1. Where GSPro course building is now (Nov 2026)
 
-GSPro does not take a Unity 6 project. Courses are produced with the community
-**OPCD** toolchain, and the `.gspcrse` file GSPro loads is built inside the OPCD
-Unity project:
+GSPro has moved to **Unity 6** and supports all three render pipelines (Built-in,
+URP, HDRP). OPCD V4 courses are supported, and the OPCD V4 tools for Unity 6 are
+in beta and rolling out to everyone. The OPCD pipeline still does the final step:
 
-| Stage | Tool | Version (as documented by OPCD users, Oct 2026) |
+| Stage | Tool | Notes |
 |---|---|---|
-| Terrain + imagery prep | QGIS / this pipeline | any |
-| Layout trace | Inkscape (SVG, one layer per hole) | 1.x |
-| SVG → meshes ("Clender" job) | OPCD web app, app.opcdgolf.com | V4 |
-| Conform meshes to terrain, cut bunkers/water, export FBX | Blender + OPCD add-on | **4.2.2+ LTS** |
-| Materials, grass, trees, lighting, **Build Course → .gspcrse** | Unity + OPCD V4 BaseProject | **Unity 2018.2.8f1** |
-| Tees, pins, hazards, OB, scorecard | GreenKeeper (OPCD) | V4 |
-| Play/test | GSPro | current |
+| LiDAR → graded terrain, surfaces, trees, holes | **this repo** (`pipeline/`) | automated |
+| Layout trace / check | Inkscape or QGIS | OPCD SVG = one layer per hole |
+| SVG → course meshes ("Clender" job) | OPCD web app (app.opcdgolf.com) | or use our `course_surfaces.obj` |
+| Conform / cut bunkers & water / FBX | Blender 4.2 LTS + OPCD add-on | optional now that we conform meshes ourselves |
+| Materials, grass, trees, lighting, **Build Course** | **Unity 6** + OPCD V4 base project (beta) | our Unity package runs inside this project |
+| Tees, pins, hazards, OB, scorecard | GreenKeeper (OPCD V4) | fed from `holes.json` / `greenkeeper.csv` |
+| Play/test | GSPro (opt into beta for V4 courses) | |
 
-Key consequences:
+Older guides that call for Unity 2018.2/2018.4 describe the pre-Unity-6 toolchain.
+Use the Unity 6 editor version that the OPCD V4 base project names; check the OPCD
+Discord, since the beta is still moving.
 
-* **The final build has to run in Unity 2018.2.8f1 with the OPCD base project,
-  not Unity 6.** OPCD's Build Course step packages and encrypts the course
-  (`AesDecrypt.dll`, Windows only) into the format GSPro reads. A course built
-  in Unity 6 will not load in GSPro.
-* **Unity 6 is useful as a preview and design studio.** This repo's Unity 6
-  package imports the real terrain, surfaces and holes so you can walk the
-  course, move tees and pins, and check yardages before the OPCD build.
-* **We do not reverse-engineer or bypass GSPro's/OPCD's course encryption.**
-  That would break their terms. Where a tool needs access we don't have, this
-  repo builds our own equivalent from public data: the terrain, layout, hole
-  data and OPCD-ready inputs below. The packaging step stays on the official
-  tools. If GSPro or OPCD move to a newer Unity, change only the last stage.
-
-Re-check the versions above in the OPCD Discord before each project. The Unity
-and Blender versions have changed before.
+**What stays on the official tools:** Build Course packages and encrypts the course
+into the format GSPro loads. We don't reverse-engineer or bypass that, because it
+would break GSPro's and OPCD's terms. Everything before that step is built here from
+public data, so the OPCD project only needs materials and a final build.
 
 ## 2. Access checklist
 
-| Need | How to get it | Cost/key |
+| Need | How to get it | Cost / key |
 |---|---|---|
-| Elevation (bare-earth LiDAR DEM) | USGS 3DEP, `elevation.nationalmap.gov`; raw .laz from `apps.nationalmap.gov/downloader` | free, public domain, no key |
-| Aerial imagery | USDA NAIP, `gis.apfo.usda.gov` | free, public domain, no key |
-| Course layout | OpenStreetMap via Overpass, `overpass-api.de`; trace missing holes yourself | free, ODbL attribution |
-| OPCD tools (Clender, Blender add-on, BaseProject, GreenKeeper) | Join the OPCD community/Discord and create an app.opcdgolf.com account | per OPCD's terms |
-| GSPro | gsprogolf.com licence, for testing | paid |
-| Unity 2018.2.8f1 + Unity 6 | Unity Hub → Install Editor → Archive (2018.2.8f1) | free Personal |
+| LiDAR point cloud | USGS 3DEP via the public EPT bucket on AWS (`usgs-lidar-public`), streamed automatically | free, public domain, no key |
+| …or your own .laz | apps.nationalmap.gov/downloader, or a state LiDAR portal | free |
+| Aerial imagery | USDA NAIP (`gis.apfo.usda.gov`) | free, public domain |
+| Course layout | OpenStreetMap via Overpass; trace the gaps yourself | free, ODbL attribution |
+| OPCD V4 tools (Unity 6 base project, GreenKeeper, Clender) | OPCD community/Discord, app.opcdgolf.com account, beta access | per OPCD terms |
+| GSPro (+ beta opt-in) | gsprogolf.com | paid |
+| Unity 6 | Unity Hub (use the exact 6000.x version OPCD names) | free Personal |
 | Blender 4.2 LTS, Inkscape, QGIS | official sites | free |
-| Windows PC | required by the OPCD Build Course step and GSPro | — |
-| Permission from the course | Needed if you plan to **share** the course publicly. Private use of public data needs none, but most designers ask the club first. | — |
+| Windows PC, 32 GB RAM recommended | Build Course and GSPro are Windows-only | — |
+| Club permission | Needed if you plan to share the course publicly | — |
 
-Outside the US, swap the sources. `[terrain] source = "file"` takes any DEM
-GeoTIFF: Canada NRCan HRDEM, UK EA LiDAR, or state LiDAR portals.
+Network hosts the pipeline uses: `s3-us-west-2.amazonaws.com` (LiDAR),
+`raw.githubusercontent.com` (LiDAR coverage index), `elevation.nationalmap.gov`,
+`gis.apfo.usda.gov`, `overpass-api.de`.
 
-## 3. What this repo automates
+## 3. How each course element is produced
 
-```
-course.toml ──► fetch ──► data/dem.npy, overlay.jpg, osm.geojson
-                         (+ your features.geojson edits)
-            ──► build ──► output/
-                 terrain/heightmap_<N>.raw   16-bit LE, row 0 = south (Flip Vertically OFF)
-                 terrain/terrain.json        size, min/max elevation, height range
-                 terrain/terrain.obj         2 m grid mesh, Y-up (Blender / OPCD conform)
-                 surfaces/splat_control0/1   Unity splat maps (rough, trees, fairway, tee,
-                                             green, bunker, water, cartpath)
-                 <slug>_opcd.svg             Inkscape layers Hole01..HoleNN, Hole99, image
-                 overlay.jpg                 aerial for tracing and the SVG image layer
-                 holes.json, greenkeeper.csv tees per tee-set, pins, aim points, yards, par
-                 build_report.json           warnings (missing greens, estimated par, ...)
-```
+### Elevation
+* The USGS 3DEP **point cloud** is used, not just the 1 m DEM. Ground returns
+  (class 2) are gridded at **0.5 m**. Gaps under buildings, water and dense canopy
+  are filled from the nearest ground and smoothed.
+* Any LiDAR CRS works, including State Plane in US survey feet. Vertical units
+  are read from the file, and you can override them with `lidar_z_units`.
+* The heightmap is resampled with a **cubic spline**, so there are no facets
+  between samples. A 4097 heightmap over 2000 m gives 0.49 m spacing.
+* `build_report.json` warns when the DEM is coarser than 0.75 m.
 
-Then in Unity 6: **GSPro Builder ▸ Import Course Output…** loads the course.
-Edit markers, then use **GSPro Builder ▸ Export Hole Markers…**.
+### Grading (what makes it play like a golf course)
+| Feature | Treatment | Defaults |
+|---|---|---|
+| Tee boxes | best-fit plane, cross-slope clamped, feathered into the surround | ≤ 1.5 %, 3 m feather |
+| Greens | noise-removing smoothing that keeps the real contours; slope QA | σ 0.6 m; warns if > 25 % of a green is over 3 % |
+| Fairways | light de-noise, feathered into rough | σ 0.5 m |
+| Bunkers | `auto`: keep the LiDAR bowl if it's there, else carve. Carved bunkers get a ramped face and a lip on the **green-facing** side | 0.6 m deep, 2 m ramp, 0.25 m lip |
+| Water | flat surface 0.3 m below the lowest 10 % of the shoreline; bed slopes to 1.8 m; banks raised so water can't spill outside the outline | |
+
+Every operation blends into the surrounding ground, and the tests check for cliffs
+and seams. Per-feature results go in the report: tee slope before and after, bunker
+depth and mode, water level, and green slope statistics.
+
+### Surfaces (fairway to rough)
+Ten terrain layers: rough, trees/native, **first cut**, fairway, **fringe**, tee, green,
+bunker, water, cart path. The first cut (2 m) wraps every fairway and the fringe
+(1 m) rings every green. Mown edges blend crisply (0.15 to 0.3 m) and the
+rough-to-native edge blends softly (1 to 2 m). Widths are set in `[surfaces]`.
+
+### Course surface meshes
+`course_surfaces.obj` contains one mesh per green, tee, fairway and bunker, named
+`Hole##_Green`, `Hole##_Tee`, `Hole##_Fairway`, `Hole##_Bunker`, and so on, plus
+`Hole##_WaterPlane`. The names follow the OPCD material-token convention. Meshes are
+triangulated at 0.5 m (1 m on fairways) and draped on the graded terrain. They import
+straight into Blender (north = +Y) and Unity 6. The Unity importer handles the OBJ
+axis conversion.
+
+### Foliage
+Trees are detected individually from the LiDAR **canopy height model** (first returns
+minus ground). Tree tops come from height-adaptive local maxima, and the crown radius
+is measured in 8 directions. Each tree is classed as **deciduous or conifer** from its
+crown shape. Trees are rejected on greens, tees, fairways, bunkers, water and roofs.
+Without LiDAR canopy, trees are scattered at natural spacing inside the layout's
+`trees` areas. The output is `trees.csv`. The Unity importer plants them as terrain
+trees, using your prefabs or placeholders.
+
+### Holes
+* Tees per tee set, from back to forward tee pads.
+* Aim points come from the hole line's dog-leg vertices.
+* Yardage is measured along the line of play.
+* Pins: front, middle and back positions are chosen on the flattest part of each green,
+  at least 3.5 m from the edge and on slopes of 2.5 % or less.
 
 ## 4. Step-by-step for a real local course
 
-1. **Scaffold**
-   `python -m gspro_builder new ../courses/my-club --lat 41.12345 --lon -81.54321 --size 2000`
-   Pick the centre of the property and a size that covers every hole plus about 100 m.
-2. **Fetch** with `python -m gspro_builder fetch ../courses/my-club`. This downloads the
-   1 m DEM, NAIP imagery and the OSM golf features.
-3. **Fix the layout.** Open `data/osm.geojson` and `data/overlay.jpg` in QGIS.
-   Trace whatever is missing into `features.geojson` using the OSM tags:
-   `golf=hole` (a line from tee to green, with `ref` and `par`), `tee`, `fairway`,
-   `green`, `bunker`, `water_hazard`, `rough`, `cartpath`, `pin`. To replace an OSM
-   shape, add `"replaces": "way/123"` to your feature. Set `[layout] source = "geojson"`
-   to ignore OSM entirely.
-4. **Build** with `python -m gspro_builder build ../courses/my-club`. Read the
-   `build_report.json` warnings.
-5. **Preview in Unity 6.** Add the package (Package Manager ▸ Add from disk ▸
-   `unity/com.local.gspro-course-builder/package.json`), import the output, walk
-   the holes, adjust tees, pins and aim points, then export.
-6. **OPCD/GSPro build** (Windows):
-   1. Open `<slug>_opcd.svg` in Inkscape and confirm the layers and colours match the
-      current OPCD style guide. Upload it as an SVG job in the OPCD app.
-   2. In Blender 4.2.2+ with the OPCD tools, open the returned `.blend`, import
-      `terrain.obj` (or the OPCD terrain package), conform, run the bunker and water
-      tools, then export FBX.
-   3. In Unity 2018.2.8f1 with the OPCD V4 BaseProject: import the terrain from
-      `heightmap_<N>.raw` (16-bit, Windows byte order, resolution N, size from
-      terrain.json, Flip Vertically off). Import the FBX at (0,0,0), set mesh
-      materials, add grass, plant trees, then Build Course.
-   4. In GreenKeeper, enter the tees, pins, aim points and par from `greenkeeper.csv`
-      or `holes_edited.json`. Set hazards and OB, then build and test in GSPro.
+1. `python -m gspro_builder new ../courses/my-club --lat 41.12345 --lon -81.54321 --size 2000`
+2. `python -m gspro_builder fetch ../courses/my-club` downloads the LiDAR, NAIP and OSM data.
+3. Open `data/osm.geojson` over `data/overlay.jpg` in QGIS. Trace whatever is missing
+   into `features.geojson`: `golf=hole` lines (tee to green, with `ref` and `par`),
+   `tee`, `fairway`, `green`, `bunker`, `water_hazard`, `rough`, `trees`, `cartpath`,
+   `pin`. To override an OSM shape, add `"replaces": "way/123"` to your feature.
+4. `python -m gspro_builder build ../courses/my-club`, then read every warning in
+   `build_report.json`. The common fixes are a missing tee polygon, LiDAR water that
+   isn't in the layout, or a green that's too steep (usually the outline is shifted
+   off the real green).
+5. **Unity 6** (inside the OPCD V4 base project, or a scratch project for preview):
+   Package Manager ▸ Add from disk ▸ `unity/com.local.gspro-course-builder/package.json`.
+   Then **GSPro Builder ▸ Import Course Output…** with the trees, water and surface
+   meshes options on. Assign real grass and sand textures to the generated
+   `.terrainlayer` assets, your tree prefabs, and the water shader. Adjust tees and
+   pins, then use **Export Hole Markers…**.
+6. In the OPCD project, set mesh materials, add grass detail, set lighting, run
+   **Build Course**, then use GreenKeeper (tees, pins, aim points, hazards, OB,
+   scorecard) and test in GSPro (beta).
 
 ## 5. Known gaps / roadmap
 
-* Trees aren't extracted yet. The next step is LiDAR canopy-height detection from .laz
-  (PDAL) into `trees.csv` for OPCD's Arborist.
-* There is no classification of surfaces from imagery yet. The layout comes from OSM
-  plus hand tracing.
-* Inner terrain only. A low-res outer/backdrop terrain is still to do.
-* The OPCD SVG colour palette follows the community `osm2svg4opcd` styles. Verify it
-  against the current OPCD guide and override it under `[svg.colors]` if needed.
-* The RAW orientation convention (south-first) is unit-tested in this repo. Still
-  confirm it against a known landmark on the first real course.
+* No buildings or structures yet. The LiDAR building mask exists but isn't turned
+  into meshes.
+* No outer/backdrop terrain beyond the main tile.
+* Surface outlines aren't classified from imagery. The layout comes from OSM plus
+  your traces.
+* The OPCD SVG colours and the OPCD V4 Unity 6 material-token names should be checked
+  against the current beta docs. Colours can be overridden under `[svg.colors]`.
+* The RAW orientation (south-first) and the OBJ axis conversions are unit-tested.
+  Confirm them against a known landmark on your first real course.

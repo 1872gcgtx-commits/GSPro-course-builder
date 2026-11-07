@@ -19,9 +19,9 @@ slug = "demo"
 center_lat = 40.0
 center_lon = -83.0
 size_m = 1200
-heightmap_res = 1025
-dem_res_m = 1.0
-splat_res = 1024
+heightmap_res = 2049
+dem_res_m = 0.5
+splat_res = 2048
 
 [imagery]
 source = "none"
@@ -101,25 +101,54 @@ def make_demo(root: Path) -> Path:
         add("bunker", ring=_ellipse((green[0] - side[0] * 22 - 10 * math.cos(ang),
                                      green[1] - side[1] * 22 - 10 * math.sin(ang)), 7, 4, ang + 0.6))
     add("water_hazard", ring=_ellipse((-180, 160), 45, 25, 0.5))
-    add("cartpath", line=[(-430, -440), (-440, -100), (-300, 60), (-260, 140), (-40, 250), (230, 140), (350, -150)])
+    add("cartpath", line=[(-430, -440), (-440, -100), (-300, 60), (-260, 140), (-230, 215), (-40, 250), (230, 140), (350, -150)])
     add("trees", ring=_ellipse((-120, -250), 140, 90, 0.3))
     (root / "features.geojson").write_text(json.dumps({"type": "FeatureCollection", "features": feats}))
 
-    # Rolling synthetic terrain with a basin under the pond.
-    n = 1200
-    c = np.linspace(-600 + 0.5, 600 - 0.5, n)
+    # Rolling synthetic terrain at 0.5 m with LiDAR-like noise (+-4 cm) and no
+    # bunkers/pond carved, so the grading step has real work to do.
+    n = 2400
+    c = np.linspace(-600 + 0.25, 600 - 0.25, n)
     xx, zz = np.meshgrid(c, c[::-1])   # north-up
-    dem = (250 + 6 * np.sin(xx / 140) * np.cos(zz / 170) + 0.012 * zz + 3 * np.sin((xx + zz) / 60)
-           - 4 * np.exp(-(((xx + 180) / 50) ** 2 + ((zz - 160) / 30) ** 2)))
+    rng = np.random.default_rng(1)
+    dem = 250 + 6 * np.sin(xx / 140) * np.cos(zz / 170) + 0.012 * zz + 3 * np.sin((xx + zz) / 60)
+    # Built-up greens: real greens are shaped to ~1-2.5 % slopes, so blend a gently
+    # tilted pad (draining toward the front) into the rolling ground at each green.
+    for _, _, _, path in HOLES:
+        gx, gz = path[-1]
+        px, pz = path[-2]
+        L = math.dist((gx, gz), (px, pz))
+        ux, uz = (gx - px) / L, (gz - pz) / L
+        d = np.hypot(xx - gx, zz - gz)
+        w = np.clip(1 - (d - 22) / 15, 0, 1)
+        w = w * w * (3 - 2 * w)
+        r, cc = int((600 - gz) / 0.5), int((gx + 600) / 0.5)
+        pad = dem[r, cc] + 0.3 + 0.015 * ((xx - gx) * ux + (zz - gz) * uz)
+        dem = dem * (1 - w) + pad * w
+    dem = dem + rng.normal(0, 0.04, xx.shape)     # LiDAR vertical noise
     (root / "data").mkdir(exist_ok=True)
     np.save(root / "data" / "dem.npy", dem.astype(np.float32))
 
+    # Synthetic canopy height model: a wood plus scattered specimen trees.
+    chm = np.zeros_like(dem, dtype=np.float32)
+    tree_xy = [(x, z) for x in range(-240, 0, 14) for z in range(-330, -170, 14)
+               if ((x + 120) / 140) ** 2 + ((z + 250) / 90) ** 2 < 1]
+    tree_xy += [(-470, -200), (-360, -300), (150, 300), (380, 50), (100, -350)]
+    for (tx, tz) in tree_xy:
+        hgt, rad = 15 + 6 * rng.random(), 3.5 + 1.5 * rng.random()
+        r0, c0 = int((600 - tz) / 0.5), int((tx + 600) / 0.5)
+        k = int(rad * 2 / 0.5)
+        sl = (slice(max(0, r0 - k), r0 + k), slice(max(0, c0 - k), c0 + k))
+        d2 = (xx[sl] - tx) ** 2 + (zz[sl] - tz) ** 2
+        chm[sl] = np.maximum(chm[sl], hgt * np.exp(-d2 / (2 * (rad / 1.2) ** 2)))
+    np.save(root / "data" / "chm.npy", chm)
+    (root / "data" / "demo_trees.json").write_text(json.dumps({"planted": len(tree_xy)}))
+
     # Fake "aerial" overlay = coloured surfaces + noise, so the image layer is exercised.
     from .layout import load_layout
-    from .surfaces import PREVIEW_COLORS, rasterize_labels
-    from .layout import SURFACE_ORDER
+    from .surfaces import PREVIEW_COLORS, TERRAIN_LAYERS, rasterize_labels
     labels = rasterize_labels(load_layout(root / "features.geojson", frame), frame, 1200)
-    pal = np.array([PREVIEW_COLORS[k] for k in SURFACE_ORDER], dtype=np.int16)
-    rgb = pal[labels] + np.random.default_rng(1).integers(-12, 12, (1200, 1200, 1))
+    pal = np.array([PREVIEW_COLORS[k] for k in TERRAIN_LAYERS], dtype=np.int16)
+    rgb = pal[labels] + rng.integers(-12, 12, (1200, 1200, 1))
     Image.fromarray(rgb.clip(0, 255).astype(np.uint8)).save(root / "data" / "overlay.jpg", quality=90)
     return root

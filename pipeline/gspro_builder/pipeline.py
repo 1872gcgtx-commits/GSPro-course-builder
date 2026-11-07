@@ -1,31 +1,39 @@
 """Pipeline orchestration: fetch -> build.
 
-fetch : downloads DEM, imagery and OSM layout into courses/<slug>/data/
+fetch : downloads elevation (LiDAR), imagery and OSM layout into courses/<slug>/data/
 build : turns data/ into courses/<slug>/output/ (all offline, re-runnable)
 
 output/
-  terrain/heightmap_<N>.raw, terrain.json, heightmap_preview.png, terrain.obj
-  surfaces/splat_control0.png, splat_control1.png, surface_labels.png, surfaces.json, surface_preview.png
-  overlay.jpg
-  <slug>_opcd.svg
-  holes.json, greenkeeper.csv
-  build_report.json
+  terrain/heightmap_<N>.raw     graded terrain, 16-bit LE, row 0 = south
+  terrain/terrain.json          size, elevations, conventions
+  terrain/terrain.obj           graded terrain mesh (Blender/OPCD)
+  terrain/*_preview.png         hillshade previews (raw vs graded)
+  surfaces/splat_control*.png   10 terrain layers incl. fringe and first cut
+  course_surfaces.obj           Hole##_Green/Tee/Fairway/Bunker + water planes, conformed
+  water.json                    water bodies (level + mesh) for the Unity importer
+  trees.csv                     individual trees (LiDAR) or scattered planting
+  overlay.jpg, <slug>_opcd.svg  tracing / OPCD SVG job input
+  holes.json, greenkeeper.csv   tees, pins (front/middle/back), aim points, yardage
+  build_report.json             grading + QA report and warnings
 """
 from __future__ import annotations
 
 import json
 import shutil
-from pathlib import Path
 
 import numpy as np
 
 from .config import CourseConfig
+from .course_meshes import build_meshes, write_obj as write_surface_obj, write_water_json
+from .foliage import FoliageConfig, detect_trees, scatter_trees, write_trees_csv
+from .grading import GradingConfig, grade
 from .holes import build_holes, write_holes
 from .layout import load_layout
 from .mesh import write_obj
-from .surfaces import write_surfaces
+from .raster import rasterize_instances
+from .surfaces import SurfaceConfig, write_surfaces
 from .svg_opcd import write_svg
-from .terrain import DEM, write_heightmap
+from .terrain import DEM, _hillshade_png, write_heightmap
 
 
 def log(msg: str) -> None:
@@ -33,26 +41,41 @@ def log(msg: str) -> None:
 
 
 def fetch(cfg: CourseConfig, what: tuple[str, ...] = ("dem", "imagery", "layout")) -> None:
-    cfg.data_dir.mkdir(parents=True, exist_ok=True)
+    d = cfg.data_dir
+    d.mkdir(parents=True, exist_ok=True)
     if "dem" in what:
-        from .sources.elevation import fetch_usgs_3dep, fill_nodata, read_dem_file
-        if cfg.dem_source == "file":
-            log(f"reading DEM {cfg.dem_file}")
-            dem = read_dem_file(str(cfg.root / cfg.dem_file), cfg.frame, cfg.dem_res_m)
+        if cfg.dem_source in ("lidar_ept", "lidar_files"):
+            from .sources.lidar import read_ept, read_las_files, save_lidar
+            if cfg.dem_source == "lidar_ept":
+                log(f"streaming USGS 3DEP LiDAR point cloud ({cfg.frame.size_m:g} m tile @ {cfg.dem_res_m:g} m)")
+                prod = read_ept(cfg.frame, cfg.dem_res_m, cfg.lidar_ept_url, log=log)
+            else:
+                log(f"reading LiDAR files {cfg.lidar_files}")
+                prod = read_las_files(cfg.lidar_files, cfg.root, cfg.frame, cfg.dem_res_m,
+                                      cfg.lidar_crs, cfg.lidar_z_units)
+            save_lidar(prod, d)
+            log(f"  ground coverage {float(prod['ground_coverage']) * 100:.0f}% of cells")
         else:
-            log(f"downloading USGS 3DEP DEM ({cfg.frame.size_m:g} m @ {cfg.dem_res_m:g} m)")
-            dem = fetch_usgs_3dep(cfg.frame, cfg.dem_res_m)
-        np.save(cfg.data_dir / "dem.npy", fill_nodata(dem))
+            from .sources.elevation import fetch_usgs_3dep, fill_nodata, read_dem_file
+            if cfg.dem_source == "file":
+                log(f"reading DEM {cfg.dem_file}")
+                dem = read_dem_file(str(cfg.root / cfg.dem_file), cfg.frame, cfg.dem_res_m)
+            else:
+                log(f"downloading USGS 3DEP DEM ({cfg.frame.size_m:g} m @ {cfg.dem_res_m:g} m)")
+                dem = fetch_usgs_3dep(cfg.frame, cfg.dem_res_m)
+            np.save(d / "dem.npy", fill_nodata(dem))
+            for stale in ("chm.npy", "lidar_masks.npz"):
+                (d / stale).unlink(missing_ok=True)
     if "imagery" in what and cfg.imagery_source == "naip":
         from PIL import Image
         from .sources.imagery import fetch_naip
         log("downloading USDA NAIP imagery")
-        Image.fromarray(fetch_naip(cfg.frame, cfg.imagery_res_m)).save(cfg.data_dir / "overlay.jpg", quality=92)
+        Image.fromarray(fetch_naip(cfg.frame, cfg.imagery_res_m)).save(d / "overlay.jpg", quality=92)
     if "layout" in what and cfg.layout_source == "osm":
         from .sources.osm import fetch_osm
         log("downloading OpenStreetMap golf features")
         gj = fetch_osm(cfg.frame)
-        (cfg.data_dir / "osm.geojson").write_text(json.dumps(gj))
+        (d / "osm.geojson").write_text(json.dumps(gj))
         log(f"  {len(gj['features'])} features")
 
 
@@ -73,30 +96,67 @@ def _layout_geojson(cfg: CourseConfig) -> dict:
 
 def build(cfg: CourseConfig) -> dict:
     out = cfg.out_dir
-    out.mkdir(parents=True, exist_ok=True)
-    dem_path = cfg.data_dir / "dem.npy"
-    if not dem_path.exists():
-        raise FileNotFoundError(f"{dem_path} missing - run `fetch` first")
-    dem = DEM(np.load(dem_path), cfg.frame)
-
-    log(f"terrain -> {cfg.heightmap_res}x{cfg.heightmap_res} RAW")
-    tinfo = write_heightmap(dem, cfg.heightmap_res, out / "terrain")
-    write_obj(dem, out / "terrain" / "terrain.obj", tinfo.min_elev_m)
+    (out / "terrain").mkdir(parents=True, exist_ok=True)
+    data = cfg.data_dir
+    if not (data / "dem.npy").exists():
+        raise FileNotFoundError(f"{data / 'dem.npy'} missing - run `fetch` first")
+    raw_dem = DEM(np.load(data / "dem.npy"), cfg.frame)
+    chm = np.load(data / "chm.npy") if (data / "chm.npy").exists() else None
+    masks = np.load(data / "lidar_masks.npz") if (data / "lidar_masks.npz").exists() else None
+    warnings: list[str] = []
+    if raw_dem.res_m > 0.75:
+        warnings.append(f"DEM resolution {raw_dem.res_m:.2f} m - greens/bunkers need <= 0.5 m (use LiDAR source)")
 
     layout = load_layout(_layout_geojson(cfg), cfg.frame)
     log(f"layout: {len(layout.holes)} holes, {len(layout.surfaces)} surfaces")
-    smeta = write_surfaces(layout, cfg.frame, cfg.splat_res, out / "surfaces")
+
+    log("grading: fairways, greens, tees, bunkers, water")
+    g = grade(raw_dem, layout, GradingConfig.from_dict(cfg.grading))
+    dem = g.dem
+
+    log(f"terrain -> {cfg.heightmap_res}x{cfg.heightmap_res} RAW "
+        f"({cfg.frame.size_m / (cfg.heightmap_res - 1):.2f} m spacing)")
+    tinfo = write_heightmap(dem, cfg.heightmap_res, out / "terrain")
+    base = tinfo.min_elev_m
+    _hillshade_png(raw_dem.data, raw_dem.res_m, out / "terrain" / "raw_preview.png")
+    write_obj(dem, out / "terrain" / "terrain.obj", base)
+
+    smeta = write_surfaces(layout, cfg.frame, cfg.splat_res, out / "surfaces",
+                           SurfaceConfig.from_dict(cfg.surfaces))
+
+    log("course surface meshes")
+    objs = build_meshes(layout, dem, base, g.water_bodies, cfg.mesh_offset_m)
+    write_surface_obj(objs, out / "course_surfaces.obj", cfg.frame.size_m)
+    write_water_json(objs, g.water_bodies, base, out / "water.json")
+
+    fcfg_d = dict(cfg.foliage)
+    source = fcfg_d.pop("source", "auto")
+    fcfg = FoliageConfig.from_dict(fcfg_d)
+    trees: list[dict] = []
+    if fcfg.enabled and source != "none":
+        if source in ("auto", "lidar") and chm is not None:
+            log("detecting trees from LiDAR canopy")
+            building = masks["building"] if masks is not None else None
+            trees = detect_trees(chm, layout, dem, base, fcfg, building)
+        elif source in ("auto", "scatter"):
+            if source == "auto":
+                warnings.append("no LiDAR canopy - trees scattered inside `trees` polygons")
+            trees = scatter_trees(layout, dem, base, fcfg)
+        else:
+            warnings.append("foliage source 'lidar' requested but no LiDAR canopy (chm.npy)")
+    write_trees_csv(trees, out / "trees.csv")
+    log(f"trees: {len(trees)}")
 
     overlay = None
-    if (cfg.data_dir / "overlay.jpg").exists():
-        shutil.copy(cfg.data_dir / "overlay.jpg", out / "overlay.jpg")
+    if (data / "overlay.jpg").exists():
+        shutil.copy(data / "overlay.jpg", out / "overlay.jpg")
         overlay = "overlay.jpg"
     write_svg(layout, cfg.frame, out / f"{cfg.slug}_opcd.svg", overlay, cfg.svg_colors)
 
-    holes = build_holes(layout, dem, tinfo.min_elev_m, cfg.tee_sets)
+    holes = build_holes(layout, dem, base, cfg.tee_sets)
     write_holes(holes, cfg.name, out)
 
-    warnings = []
+    # ------------------------------------------------------------------ QA
     numbers = [h["number"] for h in holes]
     if len(numbers) not in (9, 18):
         warnings.append(f"{len(numbers)} holes found (expected 9 or 18)")
@@ -106,9 +166,28 @@ def build(cfg: CourseConfig) -> dict:
     for h in holes:
         if not any(s.kind == "green" and s.hole == h["number"] for s in layout.surfaces):
             warnings.append(f"hole {h['number']}: no green polygon")
+        if not any(s.kind == "tee" and s.hole == h["number"] for s in layout.surfaces):
+            warnings.append(f"hole {h['number']}: no tee polygon (tee pad not levelled)")
         if h["par_estimated"]:
             warnings.append(f"hole {h['number']}: par estimated from yardage ({h['par']})")
-    report = {"course": cfg.name, "terrain": tinfo.__dict__, "surfaces": smeta["layers"],
+    gcfg = GradingConfig.from_dict(cfg.grading)
+    for gr in g.report.get("greens", []):
+        if gr["pct_area_over_limit"] > 25:
+            warnings.append(f"hole {gr['hole']} green: {gr['pct_area_over_limit']}% steeper than "
+                            f"{gcfg.green_slope_warn * 100:.0f}% - check LiDAR / layout alignment")
+    if masks is not None:
+        lw = masks["water"]
+        layout_water = rasterize_instances([s for s in layout.surfaces if s.kind == "water"],
+                                           cfg.frame, lw.shape[0]) > 0
+        missing = lw & ~layout_water
+        miss_m2 = float(missing.sum()) * (cfg.frame.size_m / lw.shape[0]) ** 2
+        if miss_m2 > 200:
+            warnings.append(f"LiDAR sees {miss_m2:.0f} m2 of water not in the layout - trace it as water_hazard")
+    report = {"course": cfg.name, "terrain": tinfo.__dict__, "grading": g.report,
+              "surfaces": smeta["layers"], "meshes": [o["name"] for o in objs],
+              "trees": {"count": len(trees),
+                        "conifer": sum(t["type"] == "conifer" for t in trees),
+                        "source": trees[0]["source"] if trees else None},
               "holes": len(holes), "par": sum(h["par"] for h in holes), "warnings": warnings}
     (out / "build_report.json").write_text(json.dumps(report, indent=2))
     for w in warnings:
