@@ -52,6 +52,22 @@ def relief_image(dem: np.ndarray, res: float) -> Image.Image:
     return Image.fromarray((rgb * 255).astype(np.uint8))
 
 
+def _existing_levels(d: Path) -> int | None:
+    lv = [int(p.name) for p in d.glob("*") if p.name.isdigit()] if d.exists() else []
+    return max(lv) if lv and (d / "0" / "0_0.jpg").exists() else None
+
+
+def _aerial(big, n, res, out_dir, log, export_image, urls) -> int:
+    log(f"aerial: {big.size_m:g} m square at {res} m ({n} px)")
+    for url in urls:
+        try:
+            aerial = export_image(url, big.utm_bbox, big.epsg, n, n, fmt="jpg", extra={"bandIds": "0,1,2"})
+            return _pyramid(Image.fromarray(aerial), res, out_dir / "aerial", 80)
+        except Exception as exc:  # next mirror
+            log(f"  {url.split('/')[2]} failed ({type(exc).__name__})")
+    raise RuntimeError("no NAIP source answered")
+
+
 def build_tiles(center: CourseFrame, area_m: float, out_dir: Path, log=print,
                 aerial_res: float = 0.5, relief_res: float = 1.0) -> dict:
     from .sources.arcgis import export_image
@@ -61,23 +77,18 @@ def build_tiles(center: CourseFrame, area_m: float, out_dir: Path, log=print,
     out_dir.mkdir(parents=True, exist_ok=True)
 
     n = int(round(area_m / aerial_res))
-    log(f"aerial: {area_m:g} m square at {aerial_res} m ({n} px)")
-    aerial = None
-    for url in NAIP_URLS:
-        try:
-            aerial = export_image(url, big.utm_bbox, big.epsg, n, n, fmt="jpg", extra={"bandIds": "0,1,2"})
-            break
-        except Exception as exc:  # next mirror
-            log(f"  {url.split('/')[2]} failed ({type(exc).__name__})")
-    if aerial is None:
-        raise RuntimeError("no NAIP source answered")
-    la = _pyramid(Image.fromarray(aerial), aerial_res, out_dir / "aerial", 80)
-    del aerial
+    la = _existing_levels(out_dir / "aerial")
+    if la is not None:
+        log("aerial: tiles already built, skipping")
+    else:
+        la = _aerial(big, n, aerial_res, out_dir, log, export_image, NAIP_URLS)
 
     m = int(round(area_m / relief_res))
     log(f"relief: 3DEP DEM at {relief_res} m ({m} px)")
-    dem = fill_nodata(export_image(USGS_3DEP_URL, big.utm_bbox, big.epsg, m, m, pixel_type="F32"))
+    # the DEM service errors on large requests: ask for it in 1000 px pieces
+    dem = fill_nodata(export_image(USGS_3DEP_URL, big.utm_bbox, big.epsg, m, m, pixel_type="F32", max_tile=1000))
     lr = _pyramid(relief_image(dem, relief_res), relief_res, out_dir / "relief", 78)
+
 
     meta = {"tile": TILE, "x0": -area_m / 2, "z1": area_m / 2, "size_m": area_m,
             "center_lat": center.center_lat, "center_lon": center.center_lon,

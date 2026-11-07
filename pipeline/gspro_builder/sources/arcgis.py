@@ -38,15 +38,15 @@ def _get(url: str, params: dict, retries: int = 4) -> bytes:
 def export_image(service_url: str, bbox: tuple[float, float, float, float], epsg: int,
                  width: int, height: int, *, pixel_type: str | None = None,
                  fmt: str = "tiff", interpolation: str = "RSP_BilinearInterpolation",
-                 extra: dict | None = None) -> np.ndarray:
+                 extra: dict | None = None, max_tile: int = MAX_TILE_PX) -> np.ndarray:
     """Fetch bbox (xmin, ymin, xmax, ymax in `epsg`) as an array, row 0 = north.
 
     Float rasters come back as (H, W) float32; imagery as (H, W, bands) uint8.
     """
     xmin, ymin, xmax, ymax = bbox
     out = None
-    nx = -(-width // MAX_TILE_PX)
-    ny = -(-height // MAX_TILE_PX)
+    nx = -(-width // max_tile)
+    ny = -(-height // max_tile)
     tw, th = -(-width // nx), -(-height // ny)
     px_w, px_h = (xmax - xmin) / width, (ymax - ymin) / height
     for j in range(ny):
