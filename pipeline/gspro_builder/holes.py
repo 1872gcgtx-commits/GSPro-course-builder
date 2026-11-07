@@ -97,13 +97,23 @@ def build_holes(layout: Layout, dem: DEM, base_elev: float, tee_sets: list[str])
             pin = green.centroid if green and point_in_ring(green.centroid, green.rings[0]) else h.path[-1]
 
         tee_boxes = _surfaces(layout, "tee", h.number)
-        tee_pts = sorted((t.centroid for t in tee_boxes),
-                         key=lambda c: -polyline_length([c, *aims, pin])) or [h.path[0]]
+        named = {t.props["tee_set"]: t.centroid for t in tee_boxes if t.props.get("tee_set")}
         tees = []
-        for i, name in enumerate(tee_sets):
-            tp = tee_pts[min(i, len(tee_pts) - 1)]
-            yards = polyline_length([tp, *aims, pin]) * M_TO_YD
-            tees.append({"name": name, "position": v3(tp), "yards": round(yards)})
+        if named:
+            # tee boxes labelled in the review page: one tee per labelled set, back to front
+            order = ["Black", "Blue", "White", "Gold", "Red", "Green"]
+            for name in sorted(named, key=lambda n: order.index(n) if n in order else 99):
+                tp = named[name]
+                yards = polyline_length([tp, *aims, pin]) * M_TO_YD
+                tees.append({"name": name, "position": v3(tp), "yards": round(yards)})
+            tees.sort(key=lambda t: -t["yards"])
+        else:
+            tee_pts = sorted((t.centroid for t in tee_boxes),
+                             key=lambda c: -polyline_length([c, *aims, pin])) or [h.path[0]]
+            for i, name in enumerate(tee_sets):
+                tp = tee_pts[min(i, len(tee_pts) - 1)]
+                yards = polyline_length([tp, *aims, pin]) * M_TO_YD
+                tees.append({"name": name, "position": v3(tp), "yards": round(yards)})
         back = tees[0]["yards"]
         out.append({
             "number": h.number,

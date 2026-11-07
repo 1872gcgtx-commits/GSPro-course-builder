@@ -95,3 +95,46 @@ def write_routings(holes: list[dict], routings: list[dict], nine_names: dict, ou
                         "complete": len(seq) == 18})
     (out_dir / "routings" / "routings.json").write_text(json.dumps(summary, indent=2))
     return summary
+
+
+TEE_ORDER = ["Black", "Blue", "White", "Gold", "Red", "Green"]
+
+
+def reviewed_shapes(draft: dict, edits: list[dict]) -> list[dict]:
+    """Draft shapes from the review page overlaid with the owner's saved edits
+    (an edit replaces the draft shape with the same id; `deleted` removes it)."""
+    shapes = {s["id"]: s for s in draft.get("shapes", [])}
+    for e in edits:
+        sid = e.get("id")
+        if not sid:
+            continue
+        if e.get("deleted"):
+            shapes.pop(sid, None)
+        else:
+            shapes[sid] = e
+    return list(shapes.values())
+
+
+def surfaces_to_geojson(shapes: list[dict], frame: CourseFrame) -> dict:
+    feats = []
+    for s in shapes:
+        ring = [list(frame.to_lonlat(x, z)) for x, z in s["ring"]]
+        if len(ring) < 3:
+            continue
+        ring.append(ring[0])
+        props = {"golf": s["kind"], "hole": str(global_number(int(s["nine"]), int(s["hole"]))),
+                 "nine": int(s["nine"]), "nine_hole": int(s["hole"]), "source": "review",
+                 "method": s.get("method"), "edited": bool(s.get("edited")), "review_id": s["id"]}
+        if s.get("tee_set"):
+            props["tee_set"] = s["tee_set"]
+        feats.append({"type": "Feature", "geometry": {"type": "Polygon", "coordinates": [ring]}, "properties": props})
+    return {"type": "FeatureCollection", "features": feats}
+
+
+def merge_surfaces(features_path: Path, fc: dict) -> int:
+    """Replace previously imported review/autodraft surfaces in features.geojson."""
+    existing = json.loads(features_path.read_text()) if features_path.exists() else {"type": "FeatureCollection", "features": []}
+    keep = [f for f in existing["features"] if (f.get("properties") or {}).get("source") not in ("review", "autodraft")]
+    existing["features"] = keep + fc["features"]
+    features_path.write_text(json.dumps(existing, indent=1))
+    return len(fc["features"])

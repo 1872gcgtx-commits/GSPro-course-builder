@@ -6,6 +6,7 @@
   all   <dir>                                      fetch + build
   demo  <dir>                                      synthetic offline course, then build
   import-routing <dir> <json file or folder>       hole lines from the routing tracer page
+  import-surfaces <dir> <draft.json> [<edits folder>]  reviewed tees/greens/fairways/bunkers
   tiles <dir> [--area 6000]                        map tiles (aerial + LiDAR relief) for the tracer page
 """
 from __future__ import annotations
@@ -89,6 +90,10 @@ def main(argv=None) -> None:
     tl = sub.add_parser("tiles")
     tl.add_argument("dir")
     tl.add_argument("--area", type=float, default=6000)
+    isf = sub.add_parser("import-surfaces")
+    isf.add_argument("dir")
+    isf.add_argument("draft")
+    isf.add_argument("edits", nargs="?")
     ir = sub.add_parser("import-routing")
     ir.add_argument("dir")
     ir.add_argument("source")
@@ -113,6 +118,21 @@ def main(argv=None) -> None:
         from .tiles import build_tiles
         cfg = load_config(d)
         build_tiles(cfg.frame, a.area, cfg.data_dir / "tiles")
+    elif a.cmd == "import-surfaces":
+        import json
+        from .routing import merge_surfaces, reviewed_shapes, surfaces_to_geojson
+        cfg = load_config(d)
+        draft = json.loads(Path(a.draft).read_text())
+        edits = []
+        if a.edits:
+            for f in sorted(Path(a.edits).rglob("*.json")):
+                v = json.loads(f.read_text())
+                v = v.get("data", v)
+                v.setdefault("id", f.stem)
+                edits.append(v)
+        shapes = reviewed_shapes(draft, edits)
+        n = merge_surfaces(cfg.root / cfg.layout_file, surfaces_to_geojson(shapes, cfg.frame))
+        print(f"imported {n} surfaces ({len(edits)} edits) into {cfg.root / cfg.layout_file}")
     elif a.cmd == "import-routing":
         import json
         from .routing import merge_hole_lines, tracer_to_geojson
