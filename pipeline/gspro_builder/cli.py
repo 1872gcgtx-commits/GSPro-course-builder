@@ -6,6 +6,7 @@
   all   <dir>                                      fetch + build
   demo  <dir>                                      synthetic offline course, then build
   import-routing <dir> <json file or folder>       hole lines from the routing tracer page
+  tiles <dir> [--area 6000]                        map tiles (aerial + LiDAR relief) for the tracer page
 """
 from __future__ import annotations
 
@@ -85,6 +86,9 @@ def main(argv=None) -> None:
     f.add_argument("--only", default="dem,imagery,layout")
     for c in ("build", "all", "demo"):
         sub.add_parser(c).add_argument("dir")
+    tl = sub.add_parser("tiles")
+    tl.add_argument("dir")
+    tl.add_argument("--area", type=float, default=6000)
     ir = sub.add_parser("import-routing")
     ir.add_argument("dir")
     ir.add_argument("source")
@@ -105,6 +109,10 @@ def main(argv=None) -> None:
         cfg = load_config(d)
         fetch(cfg)
         build(cfg)
+    elif a.cmd == "tiles":
+        from .tiles import build_tiles
+        cfg = load_config(d)
+        build_tiles(cfg.frame, a.area, cfg.data_dir / "tiles")
     elif a.cmd == "import-routing":
         import json
         from .routing import merge_hole_lines, tracer_to_geojson
