@@ -1,0 +1,680 @@
+{
+ "type": "FeatureCollection",
+ "features": [
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "LineString",
+    "coordinates": [
+     [
+      -97.51526870142763,
+      30.95574435012701
+     ],
+     [
+      -97.51827576843164,
+      30.959032146652874
+     ]
+    ]
+   },
+   "properties": {
+    "golf": "hole",
+    "ref": "1",
+    "nine": 1,
+    "nine_hole": 1,
+    "par": "5",
+    "name": "Nine 1 hole 1",
+    "source": "routing-tracer"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "LineString",
+    "coordinates": [
+     [
+      -97.51950682851063,
+      30.9592606170565
+     ],
+     [
+      -97.52126656144983,
+      30.959054950806895
+     ]
+    ]
+   },
+   "properties": {
+    "golf": "hole",
+    "ref": "2",
+    "nine": 1,
+    "nine_hole": 2,
+    "par": "3",
+    "name": "Nine 1 hole 2",
+    "source": "routing-tracer"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "LineString",
+    "coordinates": [
+     [
+      -97.52198712698794,
+      30.959632835244115
+     ],
+     [
+      -97.51881609701368,
+      30.95934192700608
+     ]
+    ]
+   },
+   "properties": {
+    "golf": "hole",
+    "ref": "3",
+    "nine": 1,
+    "nine_hole": 3,
+    "par": "4",
+    "name": "Nine 1 hole 3",
+    "source": "routing-tracer"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "LineString",
+    "coordinates": [
+     [
+      -97.51820695116909,
+      30.958234547511964
+     ],
+     [
+      -97.51699411963293,
+      30.955384523978676
+     ]
+    ]
+   },
+   "properties": {
+    "golf": "hole",
+    "ref": "4",
+    "nine": 1,
+    "nine_hole": 4,
+    "par": "4",
+    "name": "Nine 1 hole 4",
+    "source": "routing-tracer"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "LineString",
+    "coordinates": [
+     [
+      -97.51776982105619,
+      30.954327491705083
+     ],
+     [
+      -97.52128410106242,
+      30.952800385190493
+     ]
+    ]
+   },
+   "properties": {
+    "golf": "hole",
+    "ref": "5",
+    "nine": 1,
+    "nine_hole": 5,
+    "par": "4",
+    "name": "Nine 1 hole 5",
+    "source": "routing-tracer"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "LineString",
+    "coordinates": [
+     [
+      -97.52110345438216,
+      30.953280626865517
+     ],
+     [
+      -97.51977142028737,
+      30.954275824332782
+     ]
+    ]
+   },
+   "properties": {
+    "golf": "hole",
+    "ref": "6",
+    "nine": 1,
+    "nine_hole": 6,
+    "par": "3",
+    "name": "Nine 1 hole 6",
+    "source": "routing-tracer"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "LineString",
+    "coordinates": [
+     [
+      -97.5207063502203,
+      30.953976448946197
+     ],
+     [
+      -97.52390868448829,
+      30.952227549585547
+     ]
+    ]
+   },
+   "properties": {
+    "golf": "hole",
+    "ref": "7",
+    "nine": 1,
+    "nine_hole": 7,
+    "par": "4",
+    "name": "Nine 1 hole 7",
+    "source": "routing-tracer"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "LineString",
+    "coordinates": [
+     [
+      -97.52434327322612,
+      30.95212154383591
+     ],
+     [
+      -97.52246267337388,
+      30.95412862260208
+     ]
+    ]
+   },
+   "properties": {
+    "golf": "hole",
+    "ref": "8",
+    "nine": 1,
+    "nine_hole": 8,
+    "par": "4",
+    "name": "Nine 1 hole 8",
+    "source": "routing-tracer"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "LineString",
+    "coordinates": [
+     [
+      -97.52185403255469,
+      30.954435532695776
+     ],
+     [
+      -97.51749489105705,
+      30.95502091537258
+     ]
+    ]
+   },
+   "properties": {
+    "golf": "hole",
+    "ref": "9",
+    "nine": 1,
+    "nine_hole": 9,
+    "par": "5",
+    "name": "Nine 1 hole 9",
+    "source": "routing-tracer"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "LineString",
+    "coordinates": [
+     [
+      -97.51499816015401,
+      30.955794109375496
+     ],
+     [
+      -97.51680508157929,
+      30.958566797253038
+     ]
+    ]
+   },
+   "properties": {
+    "golf": "hole",
+    "ref": "10",
+    "nine": 2,
+    "nine_hole": 1,
+    "par": "4",
+    "name": "Nine 2 hole 1",
+    "source": "routing-tracer"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "LineString",
+    "coordinates": [
+     [
+      -97.51693450047269,
+      30.959100301196067
+     ],
+     [
+      -97.51953471509157,
+      30.960689817624832
+     ]
+    ]
+   },
+   "properties": {
+    "golf": "hole",
+    "ref": "11",
+    "nine": 2,
+    "nine_hole": 2,
+    "par": "4",
+    "name": "Nine 2 hole 2",
+    "source": "routing-tracer"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "LineString",
+    "coordinates": [
+     [
+      -97.51842627359227,
+      30.960424500577385
+     ],
+     [
+      -97.51679771220091,
+      30.960046025145953
+     ]
+    ]
+   },
+   "properties": {
+    "golf": "hole",
+    "ref": "12",
+    "nine": 2,
+    "nine_hole": 3,
+    "par": "3",
+    "name": "Nine 2 hole 3",
+    "source": "routing-tracer"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "LineString",
+    "coordinates": [
+     [
+      -97.5168385678105,
+      30.95955660778439
+     ],
+     [
+      -97.51290056643916,
+      30.956742180679036
+     ]
+    ]
+   },
+   "properties": {
+    "golf": "hole",
+    "ref": "13",
+    "nine": 2,
+    "nine_hole": 4,
+    "par": "5",
+    "name": "Nine 2 hole 4",
+    "source": "routing-tracer"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "LineString",
+    "coordinates": [
+     [
+      -97.51250986701265,
+      30.956331069227144
+     ],
+     [
+      -97.51364522965244,
+      30.95317746516488
+     ]
+    ]
+   },
+   "properties": {
+    "golf": "hole",
+    "ref": "14",
+    "nine": 2,
+    "nine_hole": 5,
+    "par": "4",
+    "name": "Nine 2 hole 5",
+    "source": "routing-tracer"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "LineString",
+    "coordinates": [
+     [
+      -97.51303333549876,
+      30.95293621851729
+     ],
+     [
+      -97.51077023876057,
+      30.950405693366296
+     ]
+    ]
+   },
+   "properties": {
+    "golf": "hole",
+    "ref": "15",
+    "nine": 2,
+    "nine_hole": 6,
+    "par": "4",
+    "name": "Nine 2 hole 6",
+    "source": "routing-tracer"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "LineString",
+    "coordinates": [
+     [
+      -97.51017689303471,
+      30.94999611923035
+     ],
+     [
+      -97.51137419850049,
+      30.949969137634852
+     ]
+    ]
+   },
+   "properties": {
+    "golf": "hole",
+    "ref": "16",
+    "nine": 2,
+    "nine_hole": 7,
+    "par": "3",
+    "name": "Nine 2 hole 7",
+    "source": "routing-tracer"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "LineString",
+    "coordinates": [
+     [
+      -97.51203674781591,
+      30.949905585349935
+     ],
+     [
+      -97.51357597445939,
+      30.952471610948496
+     ]
+    ]
+   },
+   "properties": {
+    "golf": "hole",
+    "ref": "17",
+    "nine": 2,
+    "nine_hole": 8,
+    "par": "4",
+    "name": "Nine 2 hole 8",
+    "source": "routing-tracer"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "LineString",
+    "coordinates": [
+     [
+      -97.51418576141084,
+      30.95221996699036
+     ],
+     [
+      -97.51427622519235,
+      30.955153740131603
+     ]
+    ]
+   },
+   "properties": {
+    "golf": "hole",
+    "ref": "18",
+    "nine": 2,
+    "nine_hole": 9,
+    "par": "4",
+    "name": "Nine 2 hole 9",
+    "source": "routing-tracer"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "LineString",
+    "coordinates": [
+     [
+      -97.51149905101283,
+      30.957132928776492
+     ],
+     [
+      -97.50617040447952,
+      30.957209650336548
+     ]
+    ]
+   },
+   "properties": {
+    "golf": "hole",
+    "ref": "19",
+    "nine": 3,
+    "nine_hole": 1,
+    "par": "5",
+    "name": "Nine 3 hole 1",
+    "source": "routing-tracer"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "LineString",
+    "coordinates": [
+     [
+      -97.5052125082464,
+      30.95791680056984
+     ],
+     [
+      -97.50599098507952,
+      30.95513093081485
+     ]
+    ]
+   },
+   "properties": {
+    "golf": "hole",
+    "ref": "20",
+    "nine": 3,
+    "nine_hole": 2,
+    "par": "4",
+    "name": "Nine 3 hole 2",
+    "source": "routing-tracer"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "LineString",
+    "coordinates": [
+     [
+      -97.50735419640789,
+      30.9513193502604
+     ],
+     [
+      -97.5066644291954,
+      30.949955669508615
+     ]
+    ]
+   },
+   "properties": {
+    "golf": "hole",
+    "ref": "21",
+    "nine": 3,
+    "nine_hole": 3,
+    "par": "3",
+    "name": "Nine 3 hole 3",
+    "source": "routing-tracer"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "LineString",
+    "coordinates": [
+     [
+      -97.50714470387011,
+      30.94912687836285
+     ],
+     [
+      -97.50316958470971,
+      30.94827533917259
+     ]
+    ]
+   },
+   "properties": {
+    "golf": "hole",
+    "ref": "22",
+    "nine": 3,
+    "nine_hole": 4,
+    "par": "4",
+    "name": "Nine 3 hole 4",
+    "source": "routing-tracer"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "LineString",
+    "coordinates": [
+     [
+      -97.50069099937872,
+      30.946751690723197
+     ],
+     [
+      -97.50092617957256,
+      30.949910526244217
+     ]
+    ]
+   },
+   "properties": {
+    "golf": "hole",
+    "ref": "23",
+    "nine": 3,
+    "nine_hole": 5,
+    "par": "4",
+    "name": "Nine 3 hole 5",
+    "source": "routing-tracer"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "LineString",
+    "coordinates": [
+     [
+      -97.50220330886285,
+      30.948578103960212
+     ],
+     [
+      -97.50124011922988,
+      30.95007069623805
+     ]
+    ]
+   },
+   "properties": {
+    "golf": "hole",
+    "ref": "24",
+    "nine": 3,
+    "nine_hole": 6,
+    "par": "3",
+    "name": "Nine 3 hole 6",
+    "source": "routing-tracer"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "LineString",
+    "coordinates": [
+     [
+      -97.50188349633282,
+      30.9506726045528
+     ],
+     [
+      -97.50522676185075,
+      30.951389038466402
+     ]
+    ]
+   },
+   "properties": {
+    "golf": "hole",
+    "ref": "25",
+    "nine": 3,
+    "nine_hole": 7,
+    "par": "4",
+    "name": "Nine 3 hole 7",
+    "source": "routing-tracer"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "LineString",
+    "coordinates": [
+     [
+      -97.50567413513343,
+      30.953730687341086
+     ],
+     [
+      -97.50685218761862,
+      30.954816459691255
+     ]
+    ]
+   },
+   "properties": {
+    "golf": "hole",
+    "ref": "26",
+    "nine": 3,
+    "nine_hole": 8,
+    "par": "3",
+    "name": "Nine 3 hole 8",
+    "source": "routing-tracer"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "LineString",
+    "coordinates": [
+     [
+      -97.5064227444422,
+      30.95665501813988
+     ],
+     [
+      -97.51047441136981,
+      30.956672736030278
+     ]
+    ]
+   },
+   "properties": {
+    "golf": "hole",
+    "ref": "27",
+    "nine": 3,
+    "nine_hole": 9,
+    "par": "5",
+    "name": "Nine 3 hole 9",
+    "source": "routing-tracer"
+   }
+  }
+ ]
+}
