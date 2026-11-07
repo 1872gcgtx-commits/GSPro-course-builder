@@ -128,26 +128,41 @@ def read_las_files(patterns: list[str], root: Path, frame: CourseFrame, res_m: f
 
 # ---------------------------------------------------------------- USGS EPT
 def _years(name: str) -> int:
+    """Acquisition year from a USGS project name: 'TX_Bell_2011', 'TX_CentralEast_1_A23' (=2023)."""
     ys = [int(y) for y in re.findall(r"(?:19|20)\d\d", name)]
+    ys += [2000 + int(y) for y in re.findall(r"_[A-Z](\d\d)$", name)]
     return max(ys) if ys else 0
 
 
+def _polygons(geom: dict):
+    if geom["type"] == "Polygon":
+        return [geom["coordinates"]]
+    if geom["type"] == "MultiPolygon":
+        return geom["coordinates"]
+    return []
+
+
 def find_ept_datasets(frame: CourseFrame) -> list[dict]:
-    from .osm import bbox_lonlat
-    s, w, n, e = bbox_lonlat(frame)
+    """USGS EPT projects whose real coverage polygon (not just its bounding box)
+    contains the whole course tile, newest first."""
+    from ..course_meshes import points_in_ring
+    h = frame.size_m / 2
+    probe = np.array([frame.to_lonlat(x, z) for x in (-h, 0, h) for z in (-h, 0, h)])
     r = requests.get(EPT_INDEX, timeout=120, headers={"User-Agent": USER_AGENT})
     r.raise_for_status()
     hits = []
     for f in r.json()["features"]:
-        xs, ys = [], []
-        def walk(c):
-            if isinstance(c[0], (int, float)):
-                xs.append(c[0]); ys.append(c[1])
-            else:
-                for cc in c:
-                    walk(cc)
-        walk(f["geometry"]["coordinates"])
-        if min(xs) <= w and max(xs) >= e and min(ys) <= s and max(ys) >= n:
+        inside = np.zeros(len(probe), bool)
+        for poly in _polygons(f["geometry"]):
+            ring = np.asarray(poly[0])
+            if ring[:, 0].min() > probe[:, 0].max() or ring[:, 0].max() < probe[:, 0].min() \
+                    or ring[:, 1].min() > probe[:, 1].max() or ring[:, 1].max() < probe[:, 1].min():
+                continue
+            m = points_in_ring(probe, ring)
+            for hole in poly[1:]:
+                m &= ~points_in_ring(probe, np.asarray(hole))
+            inside |= m
+        if inside.all():
             hits.append(f["properties"])
     return sorted(hits, key=lambda p: _years(p["name"]), reverse=True)
 

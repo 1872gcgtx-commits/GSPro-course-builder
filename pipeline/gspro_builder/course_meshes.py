@@ -104,8 +104,26 @@ def _orient_ccw(pts, tris):
     return tris
 
 
+def _sample_level(water_level: np.ndarray, frame, x, z) -> np.ndarray:
+    """Water surface at points (nearest wet cell, so edge vertices don't fall off)."""
+    from scipy import ndimage
+    n = water_level.shape[0]
+    res = frame.size_m / n
+    h = frame.size_m / 2
+    col = np.clip(((x + h) / res).astype(int), 0, n - 1)
+    row = np.clip(((h - z) / res).astype(int), 0, n - 1)
+    r0, r1, c0, c1 = max(row.min() - 5, 0), min(row.max() + 6, n), max(col.min() - 5, 0), min(col.max() + 6, n)
+    win = water_level[r0:r1, c0:c1]
+    wet = np.isfinite(win)
+    if not wet.any():
+        return np.full(len(x), np.nan)
+    idx = ndimage.distance_transform_edt(~wet, return_distances=False, return_indices=True)
+    filled = win[tuple(idx)]
+    return filled[row - r0, col - c0]
+
+
 def build_meshes(layout: Layout, dem: DEM, base_elev: float, water_bodies: list[dict],
-                 offset_m: float = 0.0) -> list[dict]:
+                 offset_m: float = 0.0, water_level: np.ndarray | None = None) -> list[dict]:
     objs = []
     counters: dict[str, int] = {}
     water_ids = {id(w["surface"]): w["level_m"] for w in water_bodies}
@@ -119,7 +137,11 @@ def build_meshes(layout: Layout, dem: DEM, base_elev: float, water_bodies: list[
             level = water_ids.get(id(s))
             if level is None:
                 continue
-            y = np.full(len(pts), level - base_elev)
+            if water_level is not None:
+                y = _sample_level(water_level, dem.frame, pts[:, 0], pts[:, 1]) - base_elev
+                y = np.where(np.isfinite(y), y, level - base_elev)
+            else:
+                y = np.full(len(pts), level - base_elev)
         else:
             y = dem.sample_smooth(pts[:, 0], pts[:, 1]) - base_elev + offset_m
         hole = s.hole if s.hole is not None else 99

@@ -143,6 +143,24 @@ def ndimage_dilate(m, it):
     return ndimage.binary_dilation(m, iterations=it)
 
 
+class StreamGrading(unittest.TestCase):
+    def test_creek_level_follows_valley(self):
+        from gspro_builder.layout import Layout, Surface
+        frame = CourseFrame(-97.5, 31.0, 400)
+        n = 800
+        c = np.linspace(-200 + 0.25, 200 - 0.25, n)
+        xx, zz = np.meshgrid(c, c[::-1])
+        dem = 170 - 0.0125 * (xx + 200) + 0.02 * np.abs(zz)      # valley falling 5 m to the east
+        creek = Surface("water", [[(-200, -6), (200, -6), (200, 6), (-200, 6)]], None, {})
+        g = grade(DEM(dem.astype(np.float32), frame), Layout([creek], [], [], []), GradingConfig())
+        w = g.report["water"][0]
+        self.assertEqual(w["type"], "stream")
+        self.assertGreater(w["level_range_m"], 3.5)              # surface drops with the valley
+        self.assertLess(w["max_cut_m"], 2.5)                     # no deep trench upstream
+        wl = g.water_level
+        self.assertLess(np.nanmean(wl[:, -50:]), np.nanmean(wl[:, :50]))   # downstream is lower
+
+
 class LidarFiles(unittest.TestCase):
     def test_state_plane_feet_laz(self):
         import laspy

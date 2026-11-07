@@ -8,8 +8,9 @@ type gets the treatment a real course architect/superintendent would expect:
   tees      levelled pad: best-fit plane, cross-slope clamped to <= 1.5 %, optional raise
   bunkers   if LiDAR already shows the bowl it is kept (smoothed); otherwise carved to
             depth with a ramped face, plus a lip on the side facing the green
-  water     flat water level from the shoreline, bed sloping to depth, banks
-            raised so water cannot "leak" outside the outline
+  water     ponds/lakes: one flat level from the shoreline. Creeks/rivers (tagged
+            river/stream, or long and narrow): the level follows the banks
+            downstream. Bed slopes to depth; banks raised so water can't leak.
 
 Every change is blended into the surrounding ground over a feather distance, so
 no cliffs or seams appear at feature edges.
@@ -46,6 +47,8 @@ class GradingConfig:
     water_depth_m: float = 1.8
     water_bed_slope: float = 0.25
     water_bank_m: float = 3.0
+    stream_elongation: float = 6.0     # length/width above which water is treated as flowing
+    stream_level_smooth_m: float = 25.0
 
     @classmethod
     def from_dict(cls, d: dict) -> "GradingConfig":
@@ -56,7 +59,8 @@ class GradingConfig:
 @dataclass
 class GradingResult:
     dem: DEM
-    water_bodies: list[dict] = field(default_factory=list)   # {surface, level_m (absolute)}
+    water_bodies: list[dict] = field(default_factory=list)   # {surface, level_m, flowing}
+    water_level: np.ndarray | None = None                     # absolute water surface (NaN = dry)
     report: dict = field(default_factory=dict)
 
 
@@ -149,8 +153,9 @@ def grade(dem: DEM, layout: Layout, cfg: GradingConfig) -> GradingResult:
         rep["bunkers"].append({"hole": s.hole, "mode": "carved" if carve else "lidar",
                                "depth_m": round(float(np.max((rim - a[win])[m])), 2)})
 
-    # 4. water: flat level, sloped bed, raised banks
+    # 4. water: level surface, sloped bed, raised banks
     water_bodies = []
+    water_level = np.full(a.shape, np.nan, np.float32)
     pad = int(np.ceil((cfg.water_bank_m + 3) / res)) + 2
     for i, sl in enumerate(ndimage.find_objects(inst["water"])):
         if sl is None:
@@ -162,15 +167,32 @@ def grade(dem: DEM, layout: Layout, cfg: GradingConfig) -> GradingResult:
         d_out = ndimage.distance_transform_edt(~m) * res
         d_in = ndimage.distance_transform_edt(m) * res
         shore = (d_out > 0) & (d_out <= 3.0)
-        level = float(np.percentile(y[shore], 10)) - cfg.water_freeboard_m
-        bed = level - np.minimum(cfg.water_depth_m, 0.3 + d_in * cfg.water_bed_slope)
+        half_w = max(float(d_in.max()), res)
+        length = float(m.sum()) * res * res / (2 * half_w)
+        tag = str(s.props.get("water", "") or s.props.get("waterway", "")).lower()
+        flowing = tag in ("river", "stream", "canal", "riverbank") or length / (2 * half_w) > cfg.stream_elongation
+        if flowing:
+            # level follows the low bank nearby, smoothed along the channel
+            idx = ndimage.distance_transform_edt(~shore, return_distances=False, return_indices=True)
+            near = y[tuple(idx)]
+            near = ndimage.minimum_filter(near, size=max(3, int(10 / res)))
+            level_f = ndimage.gaussian_filter(near, cfg.stream_level_smooth_m / res, mode="nearest") - cfg.water_freeboard_m
+        else:
+            level_f = np.full_like(y, float(np.percentile(y[shore], 10)) - cfg.water_freeboard_m)
+        bed = level_f - np.minimum(cfg.water_depth_m, 0.3 + d_in * cfg.water_bed_slope)
         y_new = np.where(m, np.minimum(y, bed), y)
         bank = (~m) & (d_out <= cfg.water_bank_m)
-        bank_min = level + 0.1 + 0.15 * (d_out / cfg.water_bank_m)
+        bank_min = level_f + 0.1 + 0.15 * (d_out / cfg.water_bank_m)
         y_new = np.where(bank, np.maximum(y_new, bank_min), y_new)
         a[win] = y_new
-        water_bodies.append({"surface": s, "level_m": level})
-        rep["water"].append({"hole": s.hole, "level_m": round(level, 2),
+        wl = water_level[win]
+        wl[m] = level_f[m]
+        level = float(np.mean(level_f[m]))
+        water_bodies.append({"surface": s, "level_m": level, "flowing": flowing})
+        rep["water"].append({"hole": s.hole, "type": "stream" if flowing else "pond",
+                             "level_m": round(level, 2),
+                             "level_range_m": round(float(np.ptp(level_f[m])), 2),
+                             "max_cut_m": round(float(np.max((y - y_new)[m])), 2),
                              "area_m2": round(float(m.sum()) * res * res)})
 
     graded = DEM(a.astype(np.float32), frame)
@@ -187,4 +209,4 @@ def grade(dem: DEM, layout: Layout, cfg: GradingConfig) -> GradingResult:
                               "max_slope_pct": round(float(np.percentile(sv, 98)) * 100, 2),
                               "pct_area_over_limit": round(float((sv > cfg.green_slope_warn).mean()) * 100, 1)})
     rep["max_change_m"] = round(float(np.abs(graded.data - dem.data).max()), 2)
-    return GradingResult(graded, water_bodies, rep)
+    return GradingResult(graded, water_bodies, water_level=water_level, report=rep)

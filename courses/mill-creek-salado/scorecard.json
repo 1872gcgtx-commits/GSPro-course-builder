@@ -1,0 +1,176 @@
+{
+  "course": "Mill Creek Golf Club",
+  "location": "Salado, Bell County, TX",
+  "coordinates_given": {
+    "lat": 30.95525,
+    "lon": -97.5155,
+    "dms": "30\u00b057'18.9\"N 97\u00b030'55.8\"W"
+  },
+  "facility": "27 holes: three nines (the Mill, the Creek, the Springs); TXGA lists the nines as Creek 1, Creek 2, Creek 3",
+  "routing": "Creek 1-2 (front = Creek 1, back = Creek 2)",
+  "source": "TXGA, Medalist Hill Country #1 yardage sheet, Feb 2025: https://txga.org/wp-content/uploads/2025/02/HC-1-Yardages-Mill-Creek-GC.pdf",
+  "tees": {
+    "Blue": {
+      "total_yards": 6439
+    },
+    "White": {
+      "total_yards": 5995
+    },
+    "Red": {
+      "total_yards": null,
+      "note": "not on TXGA sheet; other listings give 4908-5017"
+    }
+  },
+  "holes": [
+    {
+      "number": 1,
+      "par": 5,
+      "yards": {
+        "Blue": 512,
+        "White": 495
+      }
+    },
+    {
+      "number": 2,
+      "par": 3,
+      "yards": {
+        "Blue": 183,
+        "White": 156
+      }
+    },
+    {
+      "number": 3,
+      "par": 4,
+      "yards": {
+        "Blue": 340,
+        "White": 321
+      }
+    },
+    {
+      "number": 4,
+      "par": 4,
+      "yards": {
+        "Blue": 398,
+        "White": 372
+      }
+    },
+    {
+      "number": 5,
+      "par": 4,
+      "yards": {
+        "Blue": 420,
+        "White": 395
+      }
+    },
+    {
+      "number": 6,
+      "par": 3,
+      "yards": {
+        "Blue": 190,
+        "White": 169
+      }
+    },
+    {
+      "number": 7,
+      "par": 4,
+      "yards": {
+        "Blue": 395,
+        "White": 365
+      }
+    },
+    {
+      "number": 8,
+      "par": 4,
+      "yards": {
+        "Blue": 348,
+        "White": 333
+      }
+    },
+    {
+      "number": 9,
+      "par": 5,
+      "yards": {
+        "Blue": 517,
+        "White": 494
+      }
+    },
+    {
+      "number": 10,
+      "par": 4,
+      "yards": {
+        "Blue": 395,
+        "White": 380
+      }
+    },
+    {
+      "number": 11,
+      "par": 4,
+      "yards": {
+        "Blue": 346,
+        "White": 315
+      }
+    },
+    {
+      "number": 12,
+      "par": 3,
+      "yards": {
+        "Blue": 178,
+        "White": 150
+      }
+    },
+    {
+      "number": 13,
+      "par": 5,
+      "yards": {
+        "Blue": 552,
+        "White": 528
+      }
+    },
+    {
+      "number": 14,
+      "par": 4,
+      "yards": {
+        "Blue": 411,
+        "White": 395
+      }
+    },
+    {
+      "number": 15,
+      "par": 4,
+      "yards": {
+        "Blue": 385,
+        "White": 355
+      }
+    },
+    {
+      "number": 16,
+      "par": 3,
+      "yards": {
+        "Blue": 135,
+        "White": 115
+      }
+    },
+    {
+      "number": 17,
+      "par": 4,
+      "yards": {
+        "Blue": 365,
+        "White": 330
+      }
+    },
+    {
+      "number": 18,
+      "par": 4,
+      "yards": {
+        "Blue": 369,
+        "White": 327
+      }
+    }
+  ],
+  "handicaps": "not on the TXGA sheet - get from the club card",
+  "notes": [
+    "Original design by Robert Trent Jones Jr. (~1981), third nine added later",
+    "Signature holes run along Salado Creek; 2009 floods damaged creek-side holes",
+    "Other listings disagree (par 69 / 6297 yds, 6436 yds) - they are older or other nine combinations"
+  ]
+}

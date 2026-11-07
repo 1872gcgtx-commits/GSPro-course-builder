@@ -18,6 +18,7 @@ from ..geo import CourseFrame
 from .arcgis import USER_AGENT
 
 OVERPASS_URL = "https://overpass-api.de/api/interpreter"
+OSM_API_URL = "https://api.openstreetmap.org/api/0.6/map.json"
 
 
 def bbox_lonlat(frame: CourseFrame) -> tuple[float, float, float, float]:
@@ -37,9 +38,56 @@ def fetch_osm(frame: CourseFrame) -> dict:
   nwr["landuse"="forest"]({s},{w},{n},{e});
 );
 out geom;"""
-    r = requests.post(OVERPASS_URL, data={"data": q}, timeout=180, headers={"User-Agent": USER_AGENT})
+    try:
+        r = requests.post(OVERPASS_URL, data={"data": q}, timeout=180, headers={"User-Agent": USER_AGENT})
+        r.raise_for_status()
+        return overpass_to_geojson(r.json())
+    except requests.RequestException as exc:
+        print(f"[gspro-builder]   Overpass unavailable ({type(exc).__name__}); using the OSM API instead", flush=True)
+        return fetch_osm_api((s, w, n, e))
+
+
+def _wanted(tags: dict) -> bool:
+    return ("golf" in tags or tags.get("natural") in ("water", "wood") or tags.get("landuse") == "forest")
+
+
+def fetch_osm_api(bbox_snwe, depth: int = 0) -> dict:
+    """Fallback: the main OSM API `map` call (bbox <= 0.25 deg2, <= 50k nodes; split if
+    refused), filtered to golf/water/wood features and converted to Overpass-style geometry."""
+    s, w, n, e = bbox_snwe
+    r = requests.get(OSM_API_URL, params={"bbox": f"{w},{s},{e},{n}"}, timeout=180,
+                     headers={"User-Agent": USER_AGENT})
+    if r.status_code == 400 and depth < 3:          # too many nodes: quarter the box
+        mlat, mlon = (s + n) / 2, (w + e) / 2
+        feats, seen = [], set()
+        for q in ((s, w, mlat, mlon), (s, mlon, mlat, e), (mlat, w, n, mlon), (mlat, mlon, n, e)):
+            for f in fetch_osm_api(q, depth + 1)["features"]:
+                if f["properties"]["osm_id"] not in seen:
+                    seen.add(f["properties"]["osm_id"])
+                    feats.append(f)
+        return {"type": "FeatureCollection", "features": feats}
     r.raise_for_status()
-    return overpass_to_geojson(r.json())
+    els = r.json()["elements"]
+    nodes = {el["id"]: el for el in els if el["type"] == "node"}
+    ways = {el["id"]: el for el in els if el["type"] == "way"}
+
+    def geom(way):
+        return [{"lon": nodes[i]["lon"], "lat": nodes[i]["lat"]} for i in way["nodes"] if i in nodes]
+
+    out = []
+    for el in els:
+        tags = el.get("tags", {})
+        if not _wanted(tags):
+            continue
+        if el["type"] == "node":
+            out.append(el)
+        elif el["type"] == "way":
+            out.append({**el, "geometry": geom(el)})
+        elif el["type"] == "relation":
+            members = [{"type": m["type"], "role": m.get("role", ""), "geometry": geom(ways[m["ref"]])}
+                       for m in el.get("members", []) if m["type"] == "way" and m["ref"] in ways]
+            out.append({**el, "members": members})
+    return overpass_to_geojson({"elements": out})
 
 
 def _tags_to_props(tags: dict) -> dict:

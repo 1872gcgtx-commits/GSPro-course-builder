@@ -125,7 +125,7 @@ def build(cfg: CourseConfig) -> dict:
                            SurfaceConfig.from_dict(cfg.surfaces))
 
     log("course surface meshes")
-    objs = build_meshes(layout, dem, base, g.water_bodies, cfg.mesh_offset_m)
+    objs = build_meshes(layout, dem, base, g.water_bodies, cfg.mesh_offset_m, g.water_level)
     write_surface_obj(objs, out / "course_surfaces.obj", cfg.frame.size_m)
     write_water_json(objs, g.water_bodies, base, out / "water.json")
 
