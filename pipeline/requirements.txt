@@ -1,0 +1,5 @@
+numpy>=1.26
+pillow>=10.0
+requests>=2.31
+# optional: local DEM GeoTIFFs (terrain.source = "file") and compressed GeoTIFF responses
+# rasterio>=1.3

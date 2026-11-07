@@ -1,0 +1,8 @@
+{
+  "name": "GSProCourseBuilder.Editor",
+  "rootNamespace": "GSProCourseBuilder.Editor",
+  "references": ["GSProCourseBuilder.Runtime"],
+  "includePlatforms": ["Editor"],
+  "excludePlatforms": [],
+  "autoReferenced": true
+}

@@ -1,0 +1,8 @@
+{
+  "name": "com.local.gspro-course-builder",
+  "version": "0.1.0",
+  "displayName": "GSPro Course Builder (preview/design)",
+  "description": "Imports gspro_builder pipeline output (heightmap, splat maps, aerial overlay, holes) into a Unity 6 scene for previewing and designing a course, and exports edited tee/pin/aim positions.",
+  "unity": "6000.0",
+  "author": { "name": "GSPro course builder" }
+}

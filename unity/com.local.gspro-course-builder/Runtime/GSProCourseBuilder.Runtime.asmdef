@@ -1,0 +1,8 @@
+{
+  "name": "GSProCourseBuilder.Runtime",
+  "rootNamespace": "GSProCourseBuilder",
+  "references": [],
+  "includePlatforms": [],
+  "excludePlatforms": [],
+  "autoReferenced": true
+}
