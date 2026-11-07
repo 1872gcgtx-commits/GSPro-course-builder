@@ -104,6 +104,11 @@ def reviewed_shapes(draft: dict, edits: list[dict]) -> list[dict]:
     """Draft shapes from the review page overlaid with the owner's saved edits
     (an edit replaces the draft shape with the same id; `deleted` removes it)."""
     shapes = {s["id"]: s for s in draft.get("shapes", [])}
+    # shapes the owner edited from an earlier draft win over the new draft for that hole + type
+    own = {(e.get("nine"), e.get("hole"), e.get("kind")) for e in edits
+           if not e.get("deleted") and e.get("id") and not str(e["id"]).startswith(("v2-", "u"))}
+    shapes = {k: v for k, v in shapes.items()
+              if not (str(k).startswith("v2-") and (v.get("nine"), v.get("hole"), v.get("kind")) in own)}
     for e in edits:
         sid = e.get("id")
         if not sid:
