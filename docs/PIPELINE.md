@@ -99,6 +99,19 @@ trees, using your prefabs or placeholders.
 * Pins: front, middle and back positions are chosen on the flattest part of each green,
   at least 3.5 m from the edge and on slopes of 2.5 % or less.
 
+### 27-hole facilities (three nines, selectable routings)
+* Trace every hole tee → aim points → green and tag it with its **nine** and **hole number**.
+  The routing tracer page does this: imagery and LiDAR relief, with saves to a shared
+  database. Then run `python -m gspro_builder import-routing <course> <export>`.
+* All 27 holes are built into **one scene**, numbered nine 1 → 1-9, nine 2 → 10-18 and
+  nine 3 → 19-27. Those numbers are used for the SVG layers `Hole01..Hole27` and the
+  mesh names.
+* Each routing gets its own playable definition, renumbered 1-18:
+  `output/routings/course-1-2/`, `course-2-3/` and `course-1-3/`, each with
+  `holes.json` and `greenkeeper.csv`. In OPCD, build one GSPro course per routing from
+  the same scene, so players pick *Course 1-2*, *Course 2-3* or *Course 1-3*.
+* Nine names and custom routings go in `course.toml` under `[nines]` and `[[routing]]`.
+
 ## 4. Step-by-step for a real local course
 
 1. `python -m gspro_builder new ../courses/my-club --lat 41.12345 --lon -81.54321 --size 2000`

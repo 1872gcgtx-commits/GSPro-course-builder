@@ -107,6 +107,8 @@ def build_holes(layout: Layout, dem: DEM, base_elev: float, tee_sets: list[str])
         back = tees[0]["yards"]
         out.append({
             "number": h.number,
+            "nine": int(h.props["nine"]) if h.props.get("nine") else None,
+            "nine_hole": int(h.props["nine_hole"]) if h.props.get("nine_hole") else None,
             "name": h.name or f"Hole {h.number}",
             "par": h.par or estimate_par(back),
             "par_estimated": h.par is None,

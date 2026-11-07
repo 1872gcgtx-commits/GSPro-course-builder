@@ -49,3 +49,9 @@ keep_clear_m = 1.0
 
 [meshes]
 offset_m = 0.0             # lift course-surface meshes above terrain (e.g. 0.02) if they z-fight
+
+[nines]                    # names as used by the club / TXGA
+1 = "Creek 1"
+2 = "Creek 2"
+3 = "Creek 3"
+# Routings default to every pair: Course 1-2, Course 1-3, Course 2-3

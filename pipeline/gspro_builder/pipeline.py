@@ -155,11 +155,22 @@ def build(cfg: CourseConfig) -> dict:
 
     holes = build_holes(layout, dem, base, cfg.tee_sets)
     write_holes(holes, cfg.name, out)
+    routing_summary = None
+    nines = sorted({h["nine"] for h in holes if h.get("nine")})
+    if nines:
+        from .routing import default_routings, write_routings
+        routes = cfg.routings or default_routings(nines)
+        routing_summary = write_routings(holes, routes, cfg.nine_names, out, cfg.name)
+        for r in routing_summary:
+            log(f"routing {r['name']}: {r['front']} + {r['back']}, {r['holes']} holes, par {r['par']}")
 
     # ------------------------------------------------------------------ QA
     numbers = [h["number"] for h in holes]
-    if len(numbers) not in (9, 18):
-        warnings.append(f"{len(numbers)} holes found (expected 9 or 18)")
+    if len(numbers) not in (9, 18, 27, 36):
+        warnings.append(f"{len(numbers)} holes found (expected 9, 18, 27 or 36)")
+    for r in routing_summary or []:
+        if not r["complete"]:
+            warnings.append(f"{r['name']}: only {r['holes']} of 18 holes traced")
     for n in range(1, max(numbers, default=0) + 1):
         if n not in numbers:
             warnings.append(f"hole {n} missing a golf=hole line")
@@ -188,7 +199,8 @@ def build(cfg: CourseConfig) -> dict:
               "trees": {"count": len(trees),
                         "conifer": sum(t["type"] == "conifer" for t in trees),
                         "source": trees[0]["source"] if trees else None},
-              "holes": len(holes), "par": sum(h["par"] for h in holes), "warnings": warnings}
+              "holes": len(holes), "par": sum(h["par"] for h in holes),
+              "routings": routing_summary, "warnings": warnings}
     (out / "build_report.json").write_text(json.dumps(report, indent=2))
     for w in warnings:
         log(f"WARNING: {w}")

@@ -5,6 +5,7 @@
   build <dir>                                      produce all outputs
   all   <dir>                                      fetch + build
   demo  <dir>                                      synthetic offline course, then build
+  import-routing <dir> <json file or folder>       hole lines from the routing tracer page
 """
 from __future__ import annotations
 
@@ -84,6 +85,9 @@ def main(argv=None) -> None:
     f.add_argument("--only", default="dem,imagery,layout")
     for c in ("build", "all", "demo"):
         sub.add_parser(c).add_argument("dir")
+    ir = sub.add_parser("import-routing")
+    ir.add_argument("dir")
+    ir.add_argument("source")
     a = p.parse_args(argv)
     d = Path(a.dir)
 
@@ -101,6 +105,19 @@ def main(argv=None) -> None:
         cfg = load_config(d)
         fetch(cfg)
         build(cfg)
+    elif a.cmd == "import-routing":
+        import json
+        from .routing import merge_hole_lines, tracer_to_geojson
+        cfg = load_config(d)
+        src = Path(a.source)
+        files = sorted(src.rglob("*.json")) if src.is_dir() else [src]
+        docs = []
+        for f in files:
+            v = json.loads(f.read_text())
+            docs += v if isinstance(v, list) else [v.get("data", v)]
+        docs = [x for x in docs if isinstance(x, dict) and "nine" in x and "points" in x]
+        n = merge_hole_lines(cfg.root / cfg.layout_file, tracer_to_geojson(docs, cfg.frame))
+        print(f"imported {n} hole lines into {cfg.root / cfg.layout_file}")
     elif a.cmd == "demo":
         from .demo import make_demo
         make_demo(d)
