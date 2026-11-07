@@ -188,6 +188,26 @@ def train_and_classify(G, feats, aux, holes, boundary_local=None, log=print, see
     return cls, prob, dline
 
 
+def _rectangularity(m) -> float:
+    """Area / minimum-area bounding rectangle (roofs ~1, bunkers lower)."""
+    from skimage.measure import regionprops
+    props = regionprops(m.astype(np.uint8))
+    if not props:
+        return 0.0
+    p = props[0]
+    ma, mi = p.axis_major_length, p.axis_minor_length
+    if ma <= 0 or mi <= 0:
+        return 0.0
+    # for a rectangle, area = (ma*mi) * (pi/ (4*sqrt(3))) ... use the orientation-aligned box instead
+    import math as _m
+    rr, cc = np.nonzero(m)
+    th = p.orientation
+    u = cc * _m.cos(th) - rr * _m.sin(th)
+    v = cc * _m.sin(th) + rr * _m.cos(th)
+    box = (u.max() - u.min() + 1) * (v.max() - v.min() + 1)
+    return float(len(rr) / max(box, 1))
+
+
 def _hole_partition(G, holes, max_m=80.0):
     """Index of the nearest hole line per pixel (-1 beyond max_m)."""
     from scipy.spatial import cKDTree
@@ -260,6 +280,120 @@ def refine_paths(G, prob, aux, holes, log=print):
     return out
 
 
+def _fairway_continuous(G, path, ok, gmask, step=4.0, hazard=None):
+    """One smooth fairway per hole along its line of play.
+
+    ok    : boolean grid of fairway-like turf available to this hole
+    gmask : the hole's green (the fairway runs up to its front edge)
+    Returns a boolean grid mask (single component, no holes) or None.
+    """
+    L = sum(math.dist(path[i], path[i + 1]) for i in range(len(path) - 1))
+    if L < 120:
+        return None
+    # smooth the centreline so offsets don't loop at sharp dog-leg corners
+    st = np.arange(0, L, step)
+    cen = np.array([_along(path, d / L) for d in st])
+    cen = np.column_stack([ndimage.gaussian_filter1d(cen[:, 0], 3, mode="nearest"),
+                           ndimage.gaussian_filter1d(cen[:, 1], 3, mode="nearest")])
+    tan = np.gradient(cen, axis=0)
+    tan /= np.maximum(np.linalg.norm(tan, axis=1, keepdims=True), 1e-6)
+    nrm = np.column_stack([-tan[:, 1], tan[:, 0]])
+    offs = np.arange(-40, 40.01, 0.5)
+    mid = len(offs) // 2
+    lo, hi = np.full(len(st), np.nan), np.full(len(st), np.nan)
+    in_green = np.zeros(len(st), bool)
+    for i, (c, n) in enumerate(zip(cen, nrm)):
+        r, cc = G.rc(c[0], c[1])
+        if 0 <= r < G.shape[0] and 0 <= cc < G.shape[1] and gmask[r, cc]:
+            in_green[i] = True
+        xs, zs = c[0] + n[0] * offs, c[1] + n[1] * offs
+        rr = np.array([G.rc(x, z)[0] for x, z in zip(xs, zs)])
+        cc2 = np.array([G.rc(x, z)[1] for x, z in zip(xs, zs)])
+        inb = (rr >= 0) & (rr < G.shape[0]) & (cc2 >= 0) & (cc2 < G.shape[1])
+        v = np.zeros(len(offs), bool)
+        v[inb] = ok[rr[inb], cc2[inb]]
+        v = ndimage.binary_closing(v, iterations=6)            # bridge paths/sprinkler gaps
+        idx = np.flatnonzero(v)
+        if len(idx) == 0 or np.min(np.abs(idx - mid)) * 0.5 > 8:
+            continue
+        k = idx[np.argmin(np.abs(idx - mid))]
+        a = b = k
+        while a > 0 and v[a - 1]:
+            a -= 1
+        while b < len(v) - 1 and v[b + 1]:
+            b += 1
+        lo[i], hi[i] = offs[a], offs[b]
+    width = hi - lo
+    good = np.isfinite(width) & (width >= 14) & ~in_green
+    wet = np.zeros(len(st), bool)
+    if hazard is not None:
+        for i, c in enumerate(cen):
+            r, cc = G.rc(c[0], c[1])
+            if 0 <= r < G.shape[0] and 0 <= cc < G.shape[1] and hazard[r, cc]:
+                wet[i] = True
+    good &= ~wet
+    # start: first run of 3 good stations at least 40 m past the tee; end: last good before the green
+    first_green = np.flatnonzero(in_green)
+    end_lim = first_green[0] if len(first_green) else len(st)
+    g_idx = np.flatnonzero(good & (st > 40) & (np.arange(len(st)) < end_lim))
+    if len(g_idx) < 4:
+        return None
+    # split into runs: never bridge >25 m of non-fairway or any water/creek crossing
+    runs, cur = [], [g_idx[0]]
+    for i in g_idx[1:]:
+        gap = slice(cur[-1] + 1, i)
+        if (i - cur[-1]) * step > 25 or wet[gap].any():
+            runs.append(cur); cur = [i]
+        else:
+            cur.append(i)
+    runs.append(cur)
+    best_len = max(len(r) for r in runs)
+    cands = [r for r in runs if len(r) >= 0.8 * best_len]
+    run = max(cands, key=lambda r: r[-1])                     # tie -> the run nearer the green
+    if len(run) < 4:
+        return None
+    start, end = run[0], run[-1]
+    if len(first_green) and end_lim - end <= 6 and not wet[end:end_lim].any():
+        end = end_lim - 1                                     # run right up to the green's front
+    sl = slice(start, end + 1)
+    x = np.arange(len(st))[sl]
+    def fill(a):
+        a = a[sl].copy()
+        okk = np.isfinite(a)
+        a = np.interp(np.arange(len(a)), np.flatnonzero(okk), a[okk])
+        return ndimage.gaussian_filter1d(a, 3.0, mode="nearest")
+    lo_s, hi_s = fill(lo), fill(hi)
+    centre_shift = (lo_s + hi_s) / 2
+    half = np.clip((hi_s - lo_s) / 2, 9, 32)
+    half = ndimage.gaussian_filter1d(half, 2.0, mode="nearest")
+    c = cen[sl] + nrm[sl] * centre_shift[:, None]
+    n = nrm[sl]
+    left = c + n * half[:, None]
+    right = c - n * half[:, None]
+    # rounded ends
+    def cap(p, t, r, sign):
+        ang0 = math.atan2(t[1], t[0])
+        return [(p[0] + r * math.cos(ang0 + sign * a), p[1] + r * math.sin(ang0 + sign * a))
+                for a in np.linspace(math.pi / 2, -math.pi / 2, 9)]
+    t_end, t_start = tan[sl][-1], -tan[sl][0]
+    ring = list(map(tuple, left)) + cap(c[-1], t_end, half[-1], 1)[1:-1] + \
+        list(map(tuple, right[::-1])) + cap(c[0], t_start, half[0], 1)[1:-1]
+    # rasterise -> one filled, smooth component
+    from PIL import Image, ImageDraw
+    img = Image.new("L", (G.shape[1], G.shape[0]), 0)
+    ImageDraw.Draw(img).polygon([(G.rc(px, pz)[1], G.rc(px, pz)[0]) for px, pz in ring], fill=1)
+    m = np.asarray(img, bool)
+    m = ndimage.binary_fill_holes(ndimage.binary_closing(m, iterations=4))
+    m = _smooth_mask(m, 3.0)
+    m &= ~ndimage.binary_dilation(gmask, iterations=2)
+    lab, nlab = ndimage.label(m)
+    if nlab == 0:
+        return None
+    sizes = ndimage.sum(m, lab, range(1, nlab + 1))
+    m = ndimage.binary_fill_holes(lab == 1 + int(np.argmax(sizes)))
+    return m
+
+
 class _Win:
     """Adapter so autodraft._polygon can turn grid masks into local-metre rings."""
 
@@ -291,7 +425,7 @@ def draft_v2(cfg, holes, log=print) -> list[dict]:
     I = {c: i for i, c in enumerate(CLASSES)}
     mown = prob[..., I["mown"]] > 0.5
     sand = cls == I["sand"]
-    water = (cls == I["water"]) | (aux["lw"] & (aux["ndvi"] < 0.2))
+    water = (cls == I["water"]) | ndimage.binary_opening(aux["lw"], iterations=2)
     water = ndimage.binary_closing(water, iterations=3)
     out = []
 
@@ -313,6 +447,9 @@ def draft_v2(cfg, holes, log=print) -> list[dict]:
         return [(round(x, 1), round(z, 1)) for x, z in r] if r else None
 
     rgbN = np.stack([aux["R"], aux["G"], aux["B"], aux["N"]], -1)
+    # creek bed / ponds: water plus the bare gravel channel next to it
+    hazard = ndimage.binary_dilation(water, iterations=6) | \
+        (ndimage.binary_dilation(water, iterations=40) & (aux["ndvi"] < 0.12) & (prob[..., I["mown"]] < 0.3))
     for hi, h in enumerate(holes):
         nine = int(h.props.get("nine", 0) or 0)
         nh = int(h.props.get("nine_hole", 0) or 0)
@@ -365,6 +502,29 @@ def draft_v2(cfg, holes, log=print) -> list[dict]:
                     lift = float(np.median(aux["detr"][full_m]))
                     add("green", ring, "detected", 0.8 if lift > 0.03 else 0.6)
                     gmask = full_m
+        if gmask is None and 0 <= gr < G.shape[0] and 0 <= gc < G.shape[1]:
+            # greens are built-up pads: raised micro-relief, gentle slope, turf
+            k = int(35 / G.res)
+            ws = (slice(max(gr - k, 0), gr + k), slice(max(gc - k, 0), gc + k))
+            lr, lc = gr - ws[0].start, gc - ws[1].start
+            pad = (aux["detr"][ws] > 0.02) & (aux["slope"][ws] < 0.10) & (aux["chm"][ws] < 1) & (aux["ndvi"][ws] > 0.1) & ~sand[ws]
+            pad = ndimage.binary_opening(pad, iterations=2)
+            lab, _ = ndimage.label(pad)
+            sl = lab[lr, lc]
+            if not sl:
+                dd, ix = ndimage.distance_transform_edt(lab == 0, return_indices=True)
+                if dd[lr, lc] * G.res <= 5:
+                    sl = lab[ix[0][lr, lc], ix[1][lr, lc]]
+            if sl:
+                m = ndimage.binary_fill_holes(lab == sl)
+                area = m.sum() * G.res ** 2
+                if 200 <= area <= 1300 and _solidity(m) > 0.7:
+                    full_m = np.zeros(G.shape, bool)
+                    full_m[ws] = _smooth_mask(m, 1.5)
+                    ring = poly(full_m, 0.8)
+                    if ring:
+                        add("green", ring, "detected", 0.55)
+                        gmask = full_m
         if gmask is None:
             add("green", [(round(x, 1), round(z, 1)) for x, z in _ellipse(*green, 15, 11, ang_in)], "fallback", 0.2)
             gmask = np.zeros(G.shape, bool)
@@ -407,52 +567,48 @@ def draft_v2(cfg, holes, log=print) -> list[dict]:
             tmask = np.zeros(G.shape, bool)
         out[-1]["tee_set"] = "Blue"
 
-        # ---- bunkers in this hole's area
         mine = part == hi
-        bmask = sand & mine
+        # ---- fairway: ONE smooth continuous shape along the line of play
+        fwmask = np.zeros(G.shape, bool)
+        if (h.par or 4) >= 4:
+            ok = (prob[..., I["mown"]] > 0.4) & mine & (prob[..., I["trees"]] < 0.5) & ~sand & \
+                ~ndimage.binary_dilation(tmask, iterations=2)
+            m = _fairway_continuous(G, h.path, ok, gmask, hazard=hazard)
+            if m is not None and m.sum() * G.res ** 2 >= 800:
+                ring = poly(m, 1.6)
+                if ring:
+                    add("fairway", ring, "detected", 0.75)
+                    fwmask = m
+            if not fwmask.any():
+                a = _along(h.path, 0.42)
+                b = _along(h.path, 0.92)
+                add("fairway", [(round(x, 1), round(z, 1)) for x, z in _strip(a, b, 32)], "fallback", 0.2)
+                fwmask = _line_mask(G, _sub_path(h.path, 0.42, 0.92), 16.0)
+
+        # ---- bunkers: sand in this hole's playing area (near its fairway or green), not roofs
+        near_play = (ndimage.distance_transform_edt(~fwmask) * G.res < 40) | \
+            (ndimage.distance_transform_edt(~gmask) * G.res < 35)
+        bmask = sand & mine & near_play & ~ndimage.binary_dilation(aux["lb"], iterations=4)
         bmask = ndimage.binary_fill_holes(ndimage.binary_closing(bmask, iterations=2))
-        lab, nb_ = ndimage.label(bmask)
+        lab, _ = ndimage.label(bmask)
         for j, sl in enumerate(ndimage.find_objects(lab)):
             if sl is None:
                 continue
             m = lab[sl] == j + 1
             area = m.sum() * G.res ** 2
-            if not 8 <= area <= 900 or _solidity(m) < 0.5:
+            if not 8 <= area <= 900 or _solidity(m) < 0.55 or _rectangularity(m) > 0.88:
                 continue
             fm = np.zeros(G.shape, bool)
             fm[sl] = m
+            # a bunker is surrounded by grass, not pavement/roof/dirt
+            ringpx = ndimage.binary_dilation(fm, iterations=14) & ~ndimage.binary_dilation(fm, iterations=6)
+            grassy = np.isin(cls[ringpx], [I["mown"], I["rough"]]).mean()
+            if grassy < 0.45:
+                continue
             ring = poly(_smooth_mask(fm, 0.8) | fm, 0.8)
             if ring:
                 bowl = float(np.median(aux["detr"][fm]))
                 add("bunker", ring, "detected", 0.8 if bowl < -0.08 else 0.55)
-
-        # ---- fairway: mown turf in this hole's corridor, connected to the line
-        if (h.par or 4) >= 4:
-            fw = mown & mine & (dline < 60) & ~ndimage.binary_dilation(gmask, iterations=3) \
-                & ~ndimage.binary_dilation(tmask, iterations=2) & ~ndimage.binary_dilation(sand, iterations=2)
-            fw = ndimage.binary_opening(fw, iterations=2)
-            fw = ndimage.binary_closing(fw, iterations=3)
-            fw = ndimage.binary_fill_holes(fw)
-            core = _line_mask(G, _sub_path(h.path, 0.2, 0.95), 12.0)
-            lab, nlab = ndimage.label(fw)
-            keep = np.unique(lab[core & fw])
-            found = False
-            for j in keep:
-                if j == 0:
-                    continue
-                m = lab == j
-                area = m.sum() * G.res ** 2
-                if area < 500:
-                    continue
-                m = _smooth_mask(m, 2.5)
-                ring = poly(m, 1.2)
-                if ring:
-                    add("fairway", ring, "detected", 0.75 if area > 4000 else 0.55)
-                    found = True
-            if not found:
-                a = _along(h.path, 0.42)
-                b = _along(h.path, 0.92)
-                add("fairway", [(round(x, 1), round(z, 1)) for x, z in _strip(a, b, 32)], "fallback", 0.2)
 
     # ---- water bodies (shared): ponds and the creek
     lab, nlab = ndimage.label(water)
@@ -463,10 +619,15 @@ def draft_v2(cfg, holes, log=print) -> list[dict]:
             continue
         m = lab[sl] == j + 1
         area = m.sum() * G.res ** 2
-        if area < 80:
+        if area < 200:
             continue
         fm = np.zeros(G.shape, bool)
         fm[sl] = m
+        lidar_wet = aux["lw"][fm].mean() > 0.2
+        dark = np.median(aux["bri"][fm]) < 75
+        neg = np.median(aux["ndvi"][fm]) < -0.02
+        if not (lidar_wet or (dark and neg)):
+            continue                                    # bare dirt, roofs, shadows
         ring = poly(_smooth_mask(fm, 1.5) | fm, 1.5)
         if not ring:
             continue
@@ -479,6 +640,9 @@ def draft_v2(cfg, holes, log=print) -> list[dict]:
         wi += 1
     log(f"  drafted {len(out)} shapes ({wi} water bodies)")
     draft_v2.paths = {h.number: [list(p) for p in h.path] for h in holes}
+    (cfg.data_dir / "line_of_play.json").write_text(json.dumps(
+        {f"n{int(h.props.get('nine', 0) or 0)}h{int(h.props.get('nine_hole', 0) or 0)}":
+         [[round(x, 1), round(z, 1)] for x, z in h.path] for h in holes}))
     np.save(cfg.data_dir / "landcover.npy", cls)
     (cfg.data_dir / "landcover.json").write_text(json.dumps({"classes": CLASSES, "r0": G.r0, "c0": G.c0,
                                                               "res": G.res}))
