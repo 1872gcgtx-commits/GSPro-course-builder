@@ -288,13 +288,14 @@ def tune_greens(H, owner_greens, clicks, bunker_model=None, log=print):
 
 
 def find_bunkers(H, near_x, near_z, model, thr, radius=45.0, exclude=None, bowl_max=0.02, green=None, fairways=(), hazard=None,
-                 negatives=(), neg_model=None):
+                 negatives=(), neg_model=None, debug=None):
     """Bunkers around a green/fairway point: tan colour model + LiDAR depression."""
     win = H.window(near_x, near_z, radius)
     img = win["img"]
     br = img[..., :3].mean(-1)
     ndvi = (img[..., 3] - img[..., 0]) / (img[..., 3] + img[..., 0] + 1e-3)
-    bright = (br > np.median(br) + 40) & (ndvi < 0.15)        # white/grey sand the owner hasn't drawn yet
+    local = ndimage.gaussian_filter(br, 10 / H.res)
+    bright = (br - local > 22) & (ndvi < 0.15)               # sand that stands out from its own surroundings
     cd = model.dist(img)
     near_g = np.zeros(cd.shape, bool)
     if green is not None:
@@ -303,18 +304,21 @@ def find_bunkers(H, near_x, near_z, model, thr, radius=45.0, exclude=None, bowl_
         near_g = distance_transform_edt(~gm) * H.res < 8
     sand = ((cd < thr) | ((cd < thr + 0.6) & near_g) | bright) & (win["chm"] < 1.0)
     sand = ndimage.binary_opening(sand, iterations=2)
-    sand = ndimage.binary_fill_holes(ndimage.binary_closing(sand, iterations=3))
+    sand = ndimage.binary_fill_holes(ndimage.binary_closing(sand, iterations=1))   # keep neighbouring bunkers apart
     lab, n = ndimage.label(sand)
     out = []
     for j, sl in enumerate(ndimage.find_objects(lab)):
         if sl is None:
+            if debug is not None: debug.append((locals().get("area"), "if sl is None:"))
             continue
         m = lab[sl] == j + 1
         area = m.sum() * H.res ** 2
         if not 12 <= area <= 900:
+            if debug is not None: debug.append((locals().get("area"), "if not 12 <= area <= 900:"))
             continue
         bowl = float(np.median(win["detr"][sl][m]))
         if green is not None and gm[sl][m].mean() > 0.5:
+            if debug is not None: debug.append((locals().get("area"), "if green is not None and gm[sl][m].mean() > 0.5:"))
             continue                                 # on the putting surface: not a bunker
         rr, cc = np.nonzero(m)
         pts = np.array([H.to_xz(win, sl[0].start + r, sl[1].start + c) for r, c in zip(rr[::3], cc[::3])])
@@ -322,26 +326,46 @@ def find_bunkers(H, near_x, near_z, model, thr, radius=45.0, exclude=None, bowl_
         d_green = _dist_to_ring(pts, green) if green is not None else 1e9
         d_fw = min([_dist_to_ring(pts, f) for f in fairways] or [1e9])
         if d_green > 12 and d_fw > 8:
-            continue
+            # further off (fairway drawn narrower than the mown area): only clean sand ringed by turf
+            bowl_here = float(np.median(win["detr"][sl][m]))
+            strong = bowl_here < -0.15 and _solidity_px(m) >= 0.75   # deep, compact sand bowl
+            if d_fw > 25 and not strong:
+                if debug is not None: debug.append((locals().get("area"), "if d_fw > 25 and not strong:"))
+                continue
+            ringpx = ndimage.binary_dilation(m, iterations=int(8 / H.res)) & ~ndimage.binary_dilation(m, iterations=int(3 / H.res))
+            sub = img[sl[0].start - 0:sl[0].stop, sl[1].start:sl[1].stop] if False else None
+            full_m = np.zeros(img.shape[:2], bool); full_m[sl] = m
+            rp = ndimage.binary_dilation(full_m, iterations=int(8 / H.res)) & ~ndimage.binary_dilation(full_m, iterations=int(3 / H.res))
+            nd_all = (img[..., 3] - img[..., 0]) / (img[..., 3] + img[..., 0] + 1e-3)
+            if (not strong and (nd_all[rp] > 0.05).mean() < 0.75) or _solidity_px(m) < 0.6:
+                if debug is not None: debug.append((locals().get("area"), "if (nd_all[rp] > 0.15).mean() < (0.6 if strong els"))
+                continue
         if hazard is not None and hazard(pts):
+            if debug is not None: debug.append((locals().get("area"), "if hazard is not None and hazard(pts):"))
             continue                                 # creek bed gravel
         c = pts.mean(0)
         if any(math.hypot(c[0] - nx, c[1] - nz) < 8 for nx, nz in negatives):
+            if debug is not None: debug.append((locals().get("area"), "if any(math.hypot(c[0] - nx, c[1] - nz) < 8 for nx"))
             continue                                 # the owner said: not a bunker
         if neg_model is not None:
             px4 = img[sl][m][:, :4]
             if np.median(neg_model.dist(px4)) < np.median(model.dist(px4)):
+                if debug is not None: debug.append((locals().get("area"), "if np.median(neg_model.dist(px4)) < np.median(mode"))
                 continue                             # looks more like the owner's rejections than their bunkers
         ev = np.linalg.eigvalsh(np.cov(np.vstack([rr, cc]))) if len(rr) > 3 else [1, 1]
         if d_green > 6 and ev[0] / max(ev[1], 1e-6) < 0.09:   # sliver away from the green = path edge
+            if debug is not None: debug.append((locals().get("area"), "if d_green > 6 and ev[0] / max(ev[1], 1e-6) < 0.09"))
             continue
         if bowl > bowl_max and d_green > 6:          # away from the green, bunkers sit low;
+            if debug is not None: debug.append((locals().get("area"), "if bowl > bowl_max and d_green > 6:          # awa"))
             continue                                 # greenside ones can sit on the pad's raised flank
         perim = (m ^ ndimage.binary_erosion(m)).sum() * H.res
         if 2 * area / max(perim, 1e-3) < (2.5 if d_green <= 6 else 3.5):   # crescents may hug the green
+            if debug is not None: debug.append((locals().get("area"), "if 2 * area / max(perim, 1e-3) < (2.5 if d_green <"))
             continue
         px = img[sl][m]
         if ((px[:, 2] - px[:, 0]) > 15).mean() > 0.1:   # any blue water in it: swimming pool area
+            if debug is not None: debug.append((locals().get("area"), "if ((px[:, 2] - px[:, 0]) > 15).mean() > 0.1:   # "))
             continue
         full = np.zeros(img.shape[:2], bool)
         full[sl] = m
@@ -350,6 +374,17 @@ def find_bunkers(H, near_x, near_z, model, thr, radius=45.0, exclude=None, bowl_
         if ring and (exclude is None or not exclude(ring)):
             out.append({"ring": ring, "area": area, "bowl": bowl})
     return out
+
+
+def _solidity_px(m):
+    from scipy.spatial import ConvexHull
+    rr, cc = np.nonzero(m)
+    if len(rr) < 10:
+        return 1.0
+    try:
+        return float(len(rr) / max(ConvexHull(np.column_stack([rr, cc]).astype(float)).volume, 1.0))
+    except Exception:
+        return 1.0
 
 
 def _dist_to_ring(pts, ring):

@@ -98,14 +98,33 @@ for n, h in todo:
     gx, gz = clicks[kk]
     gring = new_shapes[-1]['ring'] if new_shapes and new_shapes[-1]['kind'] == 'green' and new_shapes[-1]['hole'] == h and new_shapes[-1]['nine'] == n else None
     fws = [s['ring'] for s in doc['shapes'] if s['nine'] == n and s['hole'] == h and s['kind'] == 'fairway']
-    for i, b in enumerate(find_bunkers(H, gx, gz, bmodel, bthr[0], exclude=on_cart, bowl_max=bthr[1],
-                                       green=gring, fairways=fws, hazard=in_creek, negatives=negs, neg_model=nmodel)):
+    # search around the green AND every 50 m along the line of play (fairway bunkers)
+    line = doc.get('paths', {}).get(kk) or [[clicks[kk][0], clicks[kk][1]]]
+    tee_pt = next((t for t in [doc.get('paths', {}).get(kk, [None])[0]] if t), None)
+    pts = [(gx, gz)]
+    if len(line) >= 2:
+        seg = [math.dist(line[i], line[i + 1]) for i in range(len(line) - 1)]
+        tot = sum(seg)
+        for dd in np.arange(60, max(tot - 30, 60), 50):
+            acc, j = 0.0, 0
+            while j < len(seg) - 1 and acc + seg[j] < dd:
+                acc += seg[j]; j += 1
+            u = (dd - acc) / max(seg[j], 1e-6)
+            pts.append((line[j][0] + u * (line[j + 1][0] - line[j][0]), line[j][1] + u * (line[j + 1][1] - line[j][1])))
+    found_here = []
+    for ip, (px_, pz_) in enumerate(pts):
+        for b in find_bunkers(H, px_, pz_, bmodel, bthr[0], radius=(45.0 if ip == 0 else 70.0), exclude=on_cart, bowl_max=bthr[1],
+                              green=gring, fairways=fws, hazard=in_creek, negatives=negs, neg_model=nmodel):
+            c = np.mean(b['ring'], axis=0)
+            if all(math.dist(c, np.mean(f['ring'], axis=0)) > 5 for f in found_here):
+                found_here.append(b)
+    for i, b in enumerate(found_here):
         new_shapes.append({"id": f"v4-{kk}-bunker-{i}", "nine": n, "hole": h, "kind": "bunker", "method": "traced",
                            "conf": 0.8 if b['bowl'] < -0.08 else 0.6, "ring": b['ring']})
         changed['bunkers'] += 1
     # keep fairway-side bunkers from the previous draft that are >45 m from the green
     for s in doc['shapes']:
-        if s['nine'] == n and s['hole'] == h and s['kind'] == 'bunker' and math.dist(np.mean(s['ring'], axis=0), (gx, gz)) > 45:
+        if False and s['nine'] == n and s['hole'] == h and s['kind'] == 'bunker':
             R = np.array(s['ring']); A = 0.5 * abs(np.dot(R[:, 0], np.roll(R[:, 1], -1)) - np.dot(R[:, 1], np.roll(R[:, 0], -1)))
             P = np.sum(np.linalg.norm(np.roll(R, -1, 0) - R, axis=1))
             ev = np.linalg.eigvalsh(np.cov((R - R.mean(0)).T))
@@ -148,7 +167,8 @@ def cut_out(ring, holes_rings):
     m=ndi.gaussian_filter(m.astype(float),2)>0.5
     c=max(find_contours(np.pad(m.astype(float),1),0.5),key=len)
     pts=np.array([(x0+(cc-1+0.5)*0.25, z1-(rr-1+0.5)*0.25) for rr,cc in c])
-    pts=resample_ring(chaikin(resample_ring(pts,120),2),28)
+    per=float(np.sum(np.linalg.norm(np.diff(np.vstack([pts,pts[:1]]),axis=0),axis=1)))
+    pts=resample_ring(chaikin(resample_ring(pts,max(120,int(per/2))),2),max(28,int(per/5)))
     return [[round(float(a),1),round(float(b),1)] for a,b in pts], True
 cut=0
 for s in new_shapes:
@@ -158,6 +178,16 @@ for s in new_shapes:
         s['ring'], did = cut_out(s['ring'], bs)
         cut += did
 print('greens with bunkers cut out:', cut)
+fcut=0
+for s in new_shapes:
+    k=(s['nine'],s['hole'])
+    if s['kind']=='fairway' and k not in touched and key(*k) not in reviewed:
+        bs=[b['ring'] for b in new_shapes if b['kind']=='bunker' and (b['nine'],b['hole'])==k]
+        r, did = cut_out(s['ring'], bs)
+        if did:
+            per=float(np.sum(np.linalg.norm(np.diff(np.vstack([r, r[:1]]),axis=0),axis=1)))
+            s['ring'] = r; fcut += 1
+print('fairways with bunkers cut out:', fcut)
 greens={(s['nine'],s['hole']):s['ring'] for s in new_shapes if s['kind']=='green'}
 for s in new_shapes:
     k=(s['nine'],s['hole'])
