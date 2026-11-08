@@ -152,6 +152,10 @@ def build(cfg: CourseConfig) -> dict:
         if (data / "roads.geojson").exists():
             streets = street_items(json.loads((data / "roads.geojson").read_text()), cfg.frame, naip4_, naip4_meta_,
                                    cfg.layout_shift_m)
+            if cfg.boundary:                                   # streets around the course, not the whole tile
+                from shapely.geometry import LineString, Polygon as _Poly
+                zone_ = _Poly([cfg.frame.to_local(lo, la) for lo, la in cfg.boundary]).buffer(cfg.paths.get("street_margin_m", 500))
+                streets = [st_ for st_ in streets if zone_.intersects(LineString(st_["line"]))]
             layout.paths += [(f"road:{st_['width']:g}", [tuple(q) for q in st_["line"]]) for st_ in streets]
 
     log("grading: fairways, greens, tees, bunkers, water")

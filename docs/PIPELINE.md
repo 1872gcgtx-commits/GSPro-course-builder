@@ -152,6 +152,36 @@ Each tree's tint becomes its instance colour, which drives the colour variation 
 SpeedTree and terrain-tree shaders. Rotation comes from the CSV. Shrubs are planted as
 small trees.
 
+### Cart paths and streets
+**Cart paths** are built as a network that follows the visible concrete and the way a
+course is laid out:
+
+1. A random forest learns concrete path from the 4-band aerial. Its examples are the
+   OpenStreetMap cart paths that really show as concrete, plus a "bright narrow line"
+   filter.
+2. For every hole, a path is routed from the previous green to the tee, and from the tee
+   to the green alongside the hole, as a least-cost route:
+   - cheap: visible concrete and mapped paths
+   - moderate: rough
+   - costly: woods and steep ground
+   - avoided: fairways, greens and tees
+   - effectively blocked: bunkers, houses and water (water only where the route must
+     cross it, which becomes a bridge)
+3. Overlapping routes are merged into one network and smoothed.
+
+**Streets** are OpenStreetMap's, within 500 m of the property (`[paths] street_margin_m`).
+Width depends on the class: residential 8 m, service 5 m, tertiary 9 m. Each street is
+concrete or asphalt depending on how bright the aerial is along it. Residential and
+larger streets get 0.45 m concrete curbs, cut where streets join and where cart paths
+cross. Tertiary and larger roads get a dashed yellow centre line.
+
+**Both** are graded into the terrain: each cross-section is levelled, the long profile
+smoothed (6 m for cart paths, 20 m for streets), and the shoulders blended. Greens, tees,
+bunkers and water are left untouched. They are built as draped meshes in
+`output/paths/paths.obj` + `.mtl` + textures. Where a cart path crosses water, it gets a
+deck at a straight grade between the banks, plus wooden rails. They are also painted
+into the terrain's paved layer. The Unity importer places them with the homes.
+
 ### Homes around the course
 Footprints come from **Microsoft Global ML Building Footprints** (open data, ODbL;
 `fetch --only buildings`), which include many houses built after the LiDAR was flown.
