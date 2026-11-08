@@ -41,7 +41,18 @@ gthr, grow_score = tune_grow(H, gmodel, owner_greens, clicks)
 def _area(r): return 0.5 * abs(sum(r[i][0] * r[(i + 1) % len(r)][1] - r[(i + 1) % len(r)][0] * r[i][1] for i in range(len(r))))
 median_green = float(np.median([_area(r) for r in owner_greens.values()]))
 print(f"  your median green: {median_green:.0f} m2")
-bthr, _ = tune_bunkers(H, bmodel, owner_bunkers, [np.mean(r, axis=0) for r in owner_greens.values()])
+# creek corridor (NHD stream shape) = no bunkers
+from gspro_builder.course_meshes import points_in_ring as _pir
+creek = next((s for s in doc['shapes'] if s.get('stream')), None)
+creek_ring = np.array(creek['ring']) if creek else None
+def in_creek(pts):
+    if creek_ring is None: return False
+    from gspro_builder.finetrace import _dist_to_ring
+    return _pir(np.asarray(pts), creek_ring).mean() > 0.2 or _dist_to_ring(np.asarray(pts), creek_ring) < 10
+gkeys = list(owner_greens)
+fw_by = {i: [s['ring'] for s in final if s['kind'] == 'fairway' and key(s['nine'], s['hole']) == k] for i, k in enumerate(gkeys)}
+bthr, _ = tune_bunkers(H, bmodel, owner_bunkers, [np.mean(owner_greens[k], axis=0) for k in gkeys],
+                       greens=[owner_greens[k] for k in gkeys], fairways=fw_by, hazard=in_creek)
 
 # ---- redraft greens + bunkers on holes the owner hasn't touched
 lay = load_layout(cfg.data_dir / 'osm.geojson', cfg.frame)
@@ -68,7 +79,10 @@ for n, h in todo:
     elif old_green:
         new_shapes.append(old_green); changed['green kept'] += 1
     gx, gz = clicks[kk]
-    for i, b in enumerate(find_bunkers(H, gx, gz, bmodel, bthr[0], exclude=on_cart, bowl_max=bthr[1])):
+    gring = new_shapes[-1]['ring'] if new_shapes and new_shapes[-1]['kind'] == 'green' and new_shapes[-1]['hole'] == h and new_shapes[-1]['nine'] == n else None
+    fws = [s['ring'] for s in doc['shapes'] if s['nine'] == n and s['hole'] == h and s['kind'] == 'fairway']
+    for i, b in enumerate(find_bunkers(H, gx, gz, bmodel, bthr[0], exclude=on_cart, bowl_max=bthr[1],
+                                       green=gring, fairways=fws, hazard=in_creek)):
         new_shapes.append({"id": f"v4-{kk}-bunker-{i}", "nine": n, "hole": h, "kind": "bunker", "method": "traced",
                            "conf": 0.8 if b['bowl'] < -0.08 else 0.6, "ring": b['ring']})
         changed['bunkers'] += 1
@@ -116,3 +130,69 @@ doc['learned'] = {"greens_iou": round(gscore, 2), "green_params": gparams, "bunk
 for p in [SP + 'router/draft_surfaces.json', root + 'draft_surfaces.json']:
     json.dump(doc, open(p, 'w'), separators=(',', ':'))
 print(dict(changed), 'holes redrafted:', len(todo), round(time.time() - t0), 's')
+
+# ---- fairways on par 3 holes (mown approach between tee and green), any hole without one yet
+from gspro_builder.classify import Grid, _fairway_continuous
+from gspro_builder.learn import styled_ring, rasterize
+from gspro_builder.layout import load_layout as _ll
+lc = np.load(cfg.data_dir / 'landcover.npy')
+meta = json.loads((cfg.data_dir / 'landcover.json').read_text())
+n_full = int(round(cfg.frame.size_m / meta['res']))
+G = Grid(cfg.frame, n_full, meta['res'], meta['r0'], meta['r0'] + lc.shape[0], meta['c0'], meta['c0'] + lc.shape[1])
+chm = np.load(cfg.data_dir / 'chm.npy', mmap_mode='r')[G.r0:G.r1, G.c0:G.c1]
+holes_par = {}
+for f in glob.glob(root + 'routing_export/holes/*.json'):
+    v = json.load(open(f)); v = v.get('data', v)
+    holes_par[(v['nine'], v['hole'])] = (v.get('par'), [(p['x'], p['z']) for p in v['points']])
+added = 0
+for (n, h), (par, path) in sorted(holes_par.items()):
+    if par != 3 or any(s['kind'] == 'fairway' and s['nine'] == n and s['hole'] == h for s in doc['shapes']):
+        continue
+    green = next((s['ring'] for s in doc['shapes'] if s['kind'] == 'green' and s['nine'] == n and s['hole'] == h), None)
+    tee = [s['ring'] for s in doc['shapes'] if s['kind'] == 'tee' and s['nine'] == n and s['hole'] == h]
+    if green is None:
+        continue
+    gmask = rasterize(G, [green])
+    tmask = rasterize(G, tee) if tee else np.zeros(G.shape, bool)
+    from scipy import ndimage as _nd
+    ok = (lc == 0) & (np.asarray(chm) < 1.0) & ~_nd.binary_dilation(tmask, iterations=3)
+    m = _fairway_continuous(G, path, ok, gmask, min_start=25.0, min_run=8)
+    if m is None:
+        # second opinion that doesn't depend on colour: mown turf is smooth in the 0.3 m imagery
+        xs = [q[0] for q in path]; zs = [q[1] for q in path]
+        cx, cz = (min(xs) + max(xs)) / 2, (min(zs) + max(zs)) / 2
+        half = max(max(xs) - min(xs), max(zs) - min(zs)) / 2 + 40
+        win = H.window(cx, cz, half)
+        img = win['img']; br = img[..., :3].mean(-1)
+        ndv = (img[..., 3] - img[..., 0]) / (img[..., 3] + img[..., 0] + 1e-3)
+        mu = _nd.uniform_filter(br, 7); tex = np.sqrt(np.maximum(_nd.uniform_filter(br * br, 7) - mu * mu, 0))
+        tex = _nd.uniform_filter(tex, 9)
+        turf = (ndv > 0.05) & (win['chm'] < 1.0)
+        smooth = turf & (tex < np.percentile(tex[turf], 35)) if turf.any() else turf
+        Gh = Grid(cfg.frame, int(round(cfg.frame.size_m / H.res)), H.res,
+                  int(round((cfg.frame.size_m / 2 - H.ext['z1']) / H.res)) + win['r0'],
+                  int(round((cfg.frame.size_m / 2 - H.ext['z1']) / H.res)) + win['r0'] + img.shape[0],
+                  int(round((H.ext['x0'] + cfg.frame.size_m / 2) / H.res)) + win['c0'],
+                  int(round((H.ext['x0'] + cfg.frame.size_m / 2) / H.res)) + win['c0'] + img.shape[1])
+        gm_h = rasterize(Gh, [green]); tm_h = rasterize(Gh, tee) if tee else np.zeros(Gh.shape, bool)
+        okh = smooth & ~_nd.binary_dilation(tm_h, iterations=8)
+        mh = _fairway_continuous(Gh, path, okh, gm_h, min_start=25.0, min_run=8)
+        if mh is not None and mh.sum() * Gh.res ** 2 >= 400:
+            ring = styled_ring(mh, Gh, 32, 5.0)
+            if ring:
+                doc['shapes'].append({"id": f"v5-{key(n, h)}-fairway-0", "nine": n, "hole": h, "kind": "fairway",
+                                      "method": "par3", "conf": 0.5, "ring": [[x, z] for x, z in ring]})
+                added += 1
+                print(f"  par 3 fairway (smooth-turf test): Creek {n} #{h} ({mh.sum() * Gh.res ** 2:.0f} m2)")
+        continue
+    if m is None or m.sum() * G.res ** 2 < 400:
+        continue
+    ring = styled_ring(m, G, 32, 3.0)
+    if ring:
+        doc['shapes'].append({"id": f"v5-{key(n, h)}-fairway-0", "nine": n, "hole": h, "kind": "fairway",
+                              "method": "par3", "conf": 0.6, "ring": [[x, z] for x, z in ring]})
+        added += 1
+        print(f"  par 3 fairway: Creek {n} #{h} ({m.sum() * G.res ** 2:.0f} m2)")
+print('par 3 fairways added:', added)
+for p in [SP + 'router/draft_surfaces.json', root + 'draft_surfaces.json']:
+    json.dump(doc, open(p, 'w'), separators=(',', ':'))

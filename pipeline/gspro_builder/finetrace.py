@@ -263,14 +263,20 @@ def tune_greens(H, owner_greens, clicks, bunker_model=None, log=print):
     return best, best_score
 
 
-def find_bunkers(H, near_x, near_z, model, thr, radius=45.0, exclude=None, bowl_max=0.02):
+def find_bunkers(H, near_x, near_z, model, thr, radius=45.0, exclude=None, bowl_max=0.02, green=None, fairways=(), hazard=None):
     """Bunkers around a green/fairway point: tan colour model + LiDAR depression."""
     win = H.window(near_x, near_z, radius)
     img = win["img"]
     br = img[..., :3].mean(-1)
     ndvi = (img[..., 3] - img[..., 0]) / (img[..., 3] + img[..., 0] + 1e-3)
     bright = (br > np.median(br) + 40) & (ndvi < 0.15)        # white/grey sand the owner hasn't drawn yet
-    sand = ((model.dist(img) < thr) | bright) & (win["chm"] < 1.0)
+    cd = model.dist(img)
+    near_g = np.zeros(cd.shape, bool)
+    if green is not None:
+        from scipy.ndimage import distance_transform_edt
+        gm = raster_ring(cd.shape, H, win, green)
+        near_g = distance_transform_edt(~gm) * H.res < 8
+    sand = ((cd < thr) | ((cd < thr + 0.6) & near_g) | bright) & (win["chm"] < 1.0)
     sand = ndimage.binary_opening(sand, iterations=2)
     sand = ndimage.binary_fill_holes(ndimage.binary_closing(sand, iterations=3))
     lab, n = ndimage.label(sand)
@@ -283,14 +289,24 @@ def find_bunkers(H, near_x, near_z, model, thr, radius=45.0, exclude=None, bowl_
         if not 12 <= area <= 900:
             continue
         bowl = float(np.median(win["detr"][sl][m]))
+        if green is not None and gm[sl][m].mean() > 0.5:
+            continue                                 # on the putting surface: not a bunker
         rr, cc = np.nonzero(m)
+        pts = np.array([H.to_xz(win, sl[0].start + r, sl[1].start + c) for r, c in zip(rr[::3], cc[::3])])
+        # position rule learned from the owner: bunkers hug the green or the fairway edge
+        d_green = _dist_to_ring(pts, green) if green is not None else 1e9
+        d_fw = min([_dist_to_ring(pts, f) for f in fairways] or [1e9])
+        if d_green > 12 and d_fw > 8:
+            continue
+        if hazard is not None and hazard(pts):
+            continue                                 # creek bed gravel
         ev = np.linalg.eigvalsh(np.cov(np.vstack([rr, cc]))) if len(rr) > 3 else [1, 1]
-        if ev[0] / max(ev[1], 1e-6) < 0.09:          # sliver (path edge)
+        if d_green > 6 and ev[0] / max(ev[1], 1e-6) < 0.09:   # sliver away from the green = path edge
             continue
-        if bowl > bowl_max:                          # bunkers sit lower than their surround
-            continue
+        if bowl > bowl_max and d_green > 6:          # away from the green, bunkers sit low;
+            continue                                 # greenside ones can sit on the pad's raised flank
         perim = (m ^ ndimage.binary_erosion(m)).sum() * H.res
-        if 2 * area / max(perim, 1e-3) < 3.5:       # mean width < 3.5 m: cart path / edge strip
+        if 2 * area / max(perim, 1e-3) < (2.5 if d_green <= 6 else 3.5):   # crescents may hug the green
             continue
         px = img[sl][m]
         if ((px[:, 2] - px[:, 0]) > 15).mean() > 0.1:   # any blue water in it: swimming pool area
@@ -304,13 +320,32 @@ def find_bunkers(H, near_x, near_z, model, thr, radius=45.0, exclude=None, bowl_
     return out
 
 
-def tune_bunkers(H, model, owner_bunkers, green_points, log=print):
+def _dist_to_ring(pts, ring):
+    """Min distance (m) from any of pts to the ring's edge (0 if inside)."""
+    R = np.asarray(ring, float)
+    A, B = R, np.roll(R, -1, 0)
+    best = 1e9
+    for p in pts[:: max(1, len(pts) // 60)]:
+        ab = B - A
+        t = np.clip(((p - A) * ab).sum(1) / np.maximum((ab * ab).sum(1), 1e-9), 0, 1)
+        d = np.linalg.norm(A + ab * t[:, None] - p, axis=1).min()
+        best = min(best, d)
+    # inside the ring counts as touching
+    from .course_meshes import points_in_ring
+    if points_in_ring(pts[:1], R).any():
+        return 0.0
+    return float(best)
+
+
+def tune_bunkers(H, model, owner_bunkers, green_points, log=print, greens=None, fairways=None, hazard=None):
     """Pick the colour threshold that best reproduces the owner's bunkers near their greens."""
     best, best_f = (3.0, 0.02), -1
-    for thr, bowl_max in itertools.product((1.5, 2.0, 2.5, 3.0, 4.0), (0.02, -0.02, -0.05, -0.08)):
+    for thr, bowl_max in itertools.product((1.5, 2.0, 2.5, 3.0, 4.0), (0.02, -0.02, -0.05)):
         tp = fp = fn = 0
-        for gx, gz in green_points:
-            found = find_bunkers(H, gx, gz, model, thr, bowl_max=bowl_max)
+        for i, (gx, gz) in enumerate(green_points):
+            g = greens[i] if greens else None
+            found = find_bunkers(H, gx, gz, model, thr, bowl_max=bowl_max, green=g,
+                                 fairways=(fairways or {}).get(i, ()), hazard=hazard)
             truth = [b for b in owner_bunkers if math.dist(np.mean(b["ring"], axis=0), (gx, gz)) < 45]
             used = set()
             for f in found:

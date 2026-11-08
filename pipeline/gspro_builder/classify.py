@@ -280,7 +280,7 @@ def refine_paths(G, prob, aux, holes, log=print):
     return out
 
 
-def _fairway_continuous(G, path, ok, gmask, step=4.0, hazard=None):
+def _fairway_continuous(G, path, ok, gmask, step=4.0, hazard=None, min_start=40.0, min_run=4):
     """One smooth fairway per hole along its line of play.
 
     ok    : boolean grid of fairway-like turf available to this hole
@@ -288,7 +288,7 @@ def _fairway_continuous(G, path, ok, gmask, step=4.0, hazard=None):
     Returns a boolean grid mask (single component, no holes) or None.
     """
     L = sum(math.dist(path[i], path[i + 1]) for i in range(len(path) - 1))
-    if L < 120:
+    if L < 60:
         return None
     # smooth the centreline so offsets don't loop at sharp dog-leg corners
     st = np.arange(0, L, step)
@@ -335,8 +335,8 @@ def _fairway_continuous(G, path, ok, gmask, step=4.0, hazard=None):
     # start: first run of 3 good stations at least 40 m past the tee; end: last good before the green
     first_green = np.flatnonzero(in_green)
     end_lim = first_green[0] if len(first_green) else len(st)
-    g_idx = np.flatnonzero(good & (st > 40) & (np.arange(len(st)) < end_lim))
-    if len(g_idx) < 4:
+    g_idx = np.flatnonzero(good & (st > min_start) & (np.arange(len(st)) < end_lim))
+    if len(g_idx) < min_run:
         return None
     # split into runs: never bridge >25 m of non-fairway or any water/creek crossing
     runs, cur = [], [g_idx[0]]
@@ -350,7 +350,7 @@ def _fairway_continuous(G, path, ok, gmask, step=4.0, hazard=None):
     best_len = max(len(r) for r in runs)
     cands = [r for r in runs if len(r) >= 0.8 * best_len]
     run = max(cands, key=lambda r: r[-1])                     # tie -> the run nearer the green
-    if len(run) < 4:
+    if len(run) < min_run:
         return None
     start, end = run[0], run[-1]
     if len(first_green) and end_lim - end <= 6 and not wet[end:end_lim].any():
