@@ -111,6 +111,14 @@ meta = {'species': SPEC, 'nx': nx, 'nz': nz, 'step': STEP, 'x0': x0, 'z1': z1, '
         'routings': json.load(open(O + 'routings/routings.json')) if True else None}
 meta['bin'] = {'h': pack(hq), 'w': pack(wq), 't': pack(tb)}
 
+# ---- tree models (procedural, per species) + leaf textures for the 3D trees
+from gspro_builder.treegen import write_models
+tm = write_models(Path(OUT) / 'tree_models', variants=3)
+meta['treeModels'] = tm['web']
+import shutil
+for f in (Path(OUT) / 'tree_models').glob('*.png'):
+    shutil.copy(f, Path(OUT) / f.name)
+
 # ---- homes (output/homes/homes.obj): vertices + triangles + a finish index per vertex
 hobj = Path(O) / 'homes' / 'homes.obj'
 if hobj.exists():

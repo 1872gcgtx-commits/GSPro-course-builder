@@ -128,8 +128,26 @@ species), `tint_r/g/b` (the crown's colour in the aerial relative to its species
 These are rules, not field surveys. Expect the overall mix and the creek, upland and
 open-ground pattern to be right, and individual trees to be sometimes wrong.
 
-**Unity 6:** the importer has one prefab slot per species. Empty slots fall back to your
-deciduous/conifer prefab, then to a placeholder shaped and coloured for that species.
+**Tree models:** `output/tree_models/` holds a procedural model for each species, in
+3 variants (`<species>_<n>.obj` + `.mtl`, `leaves_<species>.png`, `bark.png`). Each model
+is grown from a branching skeleton with that species' habit:
+
+- live oak: short trunk, heavy limbs spreading near-horizontal
+- Ashe juniper: several stems, a ragged cone of scale foliage
+- cedar elm: vase-shaped, upright
+- pecan: tall clear trunk, open crown
+- bald cypress: a single straight spire
+- mesquite: crooked multi-stem, flat airy crown
+
+Each model is about 2k triangles: bark tubes plus crossed leaf cards with an alpha leaf
+texture drawn for the species. Models are 10 m tall, and each tree is scaled to its own
+height and crown width.
+
+**Unity 6:** the importer has one prefab slot per species. Empty slots use the generated
+models: copied into the project, combined into one mesh with bark and cutout leaf
+materials (URP, HDRP or Built-in). Next comes your deciduous/conifer prefab, then a
+simple placeholder. For the best look, drop a SpeedTree or OPCD tree pack model into a
+species slot.
 Each tree's tint becomes its instance colour, which drives the colour variation in
 SpeedTree and terrain-tree shaders. Rotation comes from the CSV. Shrubs are planted as
 small trees.

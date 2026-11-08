@@ -13,6 +13,7 @@ output/
   water.json                    water bodies (level + mesh) for the Unity importer
   trees.csv                     individual trees (LiDAR) or scattered planting
   homes/homes.obj, .mtl, .json  houses around the course (footprints + LiDAR heights, hipped roofs)
+  tree_models/<species>_<n>.obj procedural tree models per species (bark + alpha leaf cards)
   overlay.jpg, <slug>_opcd.svg  tracing / OPCD SVG job input
   holes.json, greenkeeper.csv   tees, pins (front/middle/back), aim points, yardage
   build_report.json             grading + QA report and warnings
@@ -222,6 +223,8 @@ def build(cfg: CourseConfig) -> dict:
             write_shrubs_csv(shrubs, out / "shrubs.csv")
             tree_rep["shrubs"] = len(shrubs)
             log(f"understory: {len(shrubs)} shrubs")
+        from .treegen import write_models
+        write_models(out / "tree_models")                     # procedural models per species for Unity
         (out / "tree_species.json").write_text(json.dumps(
             {"species": {k: {"name": v[1], "crown_base_share": v[0], "count": tree_rep["species"].get(k, 0)}
                          for k, v in SPECIES.items()},

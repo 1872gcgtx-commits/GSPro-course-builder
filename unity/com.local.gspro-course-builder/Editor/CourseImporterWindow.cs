@@ -320,14 +320,28 @@ namespace GSProCourseBuilder.Editor
             var protoIndex = new Dictionary<string, int>();
             var protos = new List<TreePrototype>();
             var refSize = new List<Vector2>();
-            int Proto(string key)
+            int Proto(string key, int variant)
             {
-                if (protoIndex.TryGetValue(key, out var i)) return i;
                 GameObject prefab = null;
                 int si = System.Array.IndexOf(Species, key);
                 if (si >= 0 && o.species != null && si < o.species.Length) prefab = o.species[si];
                 bool conif = key == "ashe_juniper" || key == "bald_cypress" || key == "juniper_shrub" || key == "conifer";
                 if (!prefab) prefab = conif ? o.conifer : o.deciduous;
+                if (!prefab)
+                {
+                    // generated species models (output/tree_models/<species>_<n>.obj), 3 variants each
+                    var vkey = $"{key}_{variant}";
+                    if (protoIndex.TryGetValue(vkey, out var vi)) return vi;
+                    prefab = GeneratedTree(dir, assetDir, key, variant);
+                    if (prefab)
+                    {
+                        protos.Add(new TreePrototype { prefab = prefab });
+                        refSize.Add(PrefabSize(prefab));
+                        protoIndex[vkey] = protos.Count - 1;
+                        return protos.Count - 1;
+                    }
+                }
+                if (protoIndex.TryGetValue(key, out var i)) return i;
                 if (!prefab) prefab = PlaceholderTree(assetDir, key);
                 protos.Add(new TreePrototype { prefab = prefab });
                 refSize.Add(PrefabSize(prefab));
@@ -355,7 +369,7 @@ namespace GSProCourseBuilder.Editor
                     var nx = (x + size.x / 2f) / size.x;
                     var nz = (z + size.z / 2f) / size.z;
                     if (nx < 0 || nx > 1 || nz < 0 || nz > 1) continue;
-                    int p = Proto(key);
+                    int p = Proto(key, Mathf.Abs((int)(x * 7 + z * 13)) % 3);
                     var tint = Color.white;
                     if (tr >= 0 && f[tr].Length > 0)
                         tint = new Color(float.Parse(f[tr], inv), float.Parse(f[tg], inv), float.Parse(f[tb], inv), 1f);
@@ -387,6 +401,93 @@ namespace GSProCourseBuilder.Editor
             var b = rs[0].bounds;
             foreach (var r in rs) b.Encapsulate(r.bounds);
             return new Vector2(Mathf.Max(b.size.x, b.size.z), b.size.y);
+        }
+
+        /// Prefab from a generated species model: OBJ copied into the project, child meshes
+        /// combined onto the root (terrain trees need the renderer there), bark + cutout leaves.
+        static GameObject GeneratedTree(string dir, string assetDir, string species, int variant)
+        {
+            var src = Path.Combine(dir, "tree_models");
+            var obj = Path.Combine(src, $"{species}_{variant}.obj");
+            if (!File.Exists(obj)) return null;
+            var dst = $"{assetDir}/TreeModels";
+            var prefabPath = $"{dst}/Tree_{species}_{variant}.prefab";
+            var existing = AssetDatabase.LoadAssetAtPath<GameObject>(prefabPath);
+            if (existing) return existing;
+            Directory.CreateDirectory(dst);
+            foreach (var f in new[] { $"{species}_{variant}.obj", $"{species}.mtl", $"leaves_{species}.png", "bark.png" })
+            {
+                var from = Path.Combine(src, f);
+                if (File.Exists(from) && !File.Exists($"{dst}/{f}")) File.Copy(from, $"{dst}/{f}");
+            }
+            AssetDatabase.Refresh();
+            var leafTexPath = $"{dst}/leaves_{species}.png";
+            if (AssetImporter.GetAtPath(leafTexPath) is TextureImporter ti)
+            {
+                ti.alphaIsTransparency = true; ti.mipMapsPreserveCoverage = true; ti.alphaTestReferenceValue = 0.45f;
+                ti.SaveAndReimport();
+            }
+            var model = AssetDatabase.LoadAssetAtPath<GameObject>($"{dst}/{species}_{variant}.obj");
+            if (!model) return null;
+            // combine every child mesh into one mesh; submesh 0 = bark, 1 = leaves (by material name)
+            var bark = new List<CombineInstance>(); var leaves = new List<CombineInstance>();
+            foreach (var mf in model.GetComponentsInChildren<MeshFilter>())
+            {
+                var mr = mf.GetComponent<MeshRenderer>();
+                for (int s = 0; s < mf.sharedMesh.subMeshCount; s++)
+                {
+                    var mname = mr && s < mr.sharedMaterials.Length && mr.sharedMaterials[s] ? mr.sharedMaterials[s].name : "";
+                    var ci = new CombineInstance { mesh = mf.sharedMesh, subMeshIndex = s, transform = mf.transform.localToWorldMatrix };
+                    (mname.StartsWith("Leaves") ? leaves : bark).Add(ci);
+                }
+            }
+            Mesh Part(List<CombineInstance> l) { var m = new Mesh { indexFormat = IndexFormat.UInt32 }; m.CombineMeshes(l.ToArray(), true, true); return m; }
+            var mesh = new Mesh { name = $"Tree_{species}_{variant}", indexFormat = IndexFormat.UInt32 };
+            mesh.CombineMeshes(new[] { new CombineInstance { mesh = Part(bark) }, new CombineInstance { mesh = Part(leaves) } }, false, false);
+            mesh.RecalculateBounds();
+            AssetDatabase.CreateAsset(mesh, $"{dst}/Tree_{species}_{variant}_Mesh.asset");
+            var barkMat = AssetDatabase.LoadAssetAtPath<Material>($"{dst}/Tree_Bark.mat");
+            if (!barkMat)
+            {
+                barkMat = NewLitMaterial(Color.white, "Tree_Bark");
+                SetMainTexture(barkMat, AssetDatabase.LoadAssetAtPath<Texture2D>($"{dst}/bark.png"));
+                AssetDatabase.CreateAsset(barkMat, $"{dst}/Tree_Bark.mat");
+            }
+            var leafMat = AssetDatabase.LoadAssetAtPath<Material>($"{dst}/Tree_{species}_Leaves.mat");
+            if (!leafMat)
+            {
+                leafMat = NewLitMaterial(Color.white, $"Tree_{species}_Leaves");
+                SetMainTexture(leafMat, AssetDatabase.LoadAssetAtPath<Texture2D>(leafTexPath));
+                MakeCutout(leafMat, 0.45f);
+                AssetDatabase.CreateAsset(leafMat, $"{dst}/Tree_{species}_Leaves.mat");
+            }
+            var go = new GameObject($"Tree_{species}_{variant}");
+            go.AddComponent<MeshFilter>().sharedMesh = mesh;
+            go.AddComponent<MeshRenderer>().sharedMaterials = new[] { barkMat, leafMat };
+            var prefab = PrefabUtility.SaveAsPrefabAsset(go, prefabPath);
+            Object.DestroyImmediate(go);
+            return prefab;
+        }
+
+        static void SetMainTexture(Material m, Texture2D t)
+        {
+            if (!t) return;
+            if (m.HasProperty("_BaseColorMap")) m.SetTexture("_BaseColorMap", t);   // HDRP
+            if (m.HasProperty("_BaseMap")) m.SetTexture("_BaseMap", t);             // URP
+            if (m.HasProperty("_MainTex")) m.SetTexture("_MainTex", t);             // Built-in
+        }
+
+        /// Alpha-tested (cutout), double-sided foliage in any render pipeline.
+        static void MakeCutout(Material m, float cutoff)
+        {
+            if (m.HasProperty("_Cutoff")) m.SetFloat("_Cutoff", cutoff);
+            if (m.HasProperty("_AlphaClip")) { m.SetFloat("_AlphaClip", 1f); m.EnableKeyword("_ALPHATEST_ON"); }          // URP
+            if (m.HasProperty("_AlphaCutoffEnable")) { m.SetFloat("_AlphaCutoffEnable", 1f); m.SetFloat("_AlphaCutoff", cutoff); m.EnableKeyword("_ALPHATEST_ON"); } // HDRP
+            if (m.HasProperty("_Mode")) { m.SetFloat("_Mode", 1f); m.EnableKeyword("_ALPHATEST_ON"); }                    // Built-in Standard
+            if (m.HasProperty("_Cull")) m.SetFloat("_Cull", 0f);
+            if (m.HasProperty("_CullMode")) m.SetFloat("_CullMode", 0f);
+            if (m.HasProperty("_DoubleSidedEnable")) { m.SetFloat("_DoubleSidedEnable", 1f); m.doubleSidedGI = true; }
+            m.renderQueue = (int)RenderQueue.AlphaTest;
         }
 
         /// Single-mesh placeholder tree shaped and coloured for its species

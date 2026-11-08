@@ -181,48 +181,131 @@ button[aria-pressed="true"] { background: var(--chip-on); color: var(--chip-on-i
   wg.setAttribute('position', new THREE.BufferAttribute(wp, 3)); wg.setIndex(wi); wg.computeVertexNormals();
   scene.add(new THREE.Mesh(wg, new THREE.MeshPhongMaterial({ color: 0x2f6680, specular: 0x9fc4d6, shininess: 70, transparent: true, opacity: 0.88 })));
 
-  // ---------- trees by species: crown shape, proportions and colour per species
+  // ---------- trees: real 3D models (procedural, per species) near the view; picture cards
+  // ("impostors" rendered from the same models) further away, as games do
   const nT = T.byteLength / 7;
   const SPEC = C.species || ['live_oak', 'ashe_juniper', 'cedar_elm', 'pecan', 'bald_cypress', 'mesquite', 'hackberry', 'brush', 'juniper_shrub'];
-  // geometry: round / cone / tall oval; crown sx (width x radius), sy (height share), centre (share of height), hsl colour
-  const LOOK = {
-    live_oak:      { g: 'round', sx: 1.05, sy: 0.30, cy: 0.66, hsl: [0.27, 0.38, 0.20] },
-    ashe_juniper:  { g: 'cone',  sx: 0.95, sy: 0.92, cy: 0.50, hsl: [0.36, 0.30, 0.16] },
-    cedar_elm:     { g: 'round', sx: 0.95, sy: 0.42, cy: 0.62, hsl: [0.24, 0.42, 0.27] },
-    pecan:         { g: 'round', sx: 1.00, sy: 0.40, cy: 0.66, hsl: [0.22, 0.44, 0.30] },
-    bald_cypress:  { g: 'cone',  sx: 0.85, sy: 0.85, cy: 0.52, hsl: [0.26, 0.36, 0.26] },
-    mesquite:      { g: 'round', sx: 1.10, sy: 0.26, cy: 0.70, hsl: [0.20, 0.30, 0.34] },
-    hackberry:     { g: 'round', sx: 1.00, sy: 0.40, cy: 0.62, hsl: [0.25, 0.36, 0.26] },
-    brush:         { g: 'round', sx: 1.00, sy: 0.50, cy: 0.50, hsl: [0.22, 0.32, 0.28] },
-    juniper_shrub: { g: 'cone',  sx: 1.00, sy: 0.95, cy: 0.50, hsl: [0.36, 0.30, 0.17] },
-  };
-  const geos = { round: new THREE.IcosahedronGeometry(1, 1), cone: new THREE.ConeGeometry(1, 1, 7) };
-  const trunkGeo = new THREE.CylinderGeometry(0.12, 0.18, 1, 5);
-  const leafMat = new THREE.MeshLambertMaterial({ color: 0xffffff, flatShading: true });
-  const trunkMat = new THREE.MeshLambertMaterial({ color: 0x5a4632 });
-  const counts = new Array(SPEC.length).fill(0);
-  for (let t = 0; t < nT; t++) counts[T.getUint8(t * 7 + 6)]++;
-  const meshes = SPEC.map((k, i) => {
-    const cap = Math.max(counts[i], 1);
-    const m = new THREE.InstancedMesh(geos[(LOOK[k] || LOOK.cedar_elm).g], leafMat, cap);
-    m.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(cap * 3), 3);   // sized before count is reset
-    m.count = 0; return m;
-  });
-  let nTrunk = 0; for (let i = 0; i < 7; i++) nTrunk += counts[i];
-  const trunks = new THREE.InstancedMesh(trunkGeo, trunkMat, Math.max(nTrunk, 1)); trunks.count = 0;
-  const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), sc = new THREE.Vector3(), col = new THREE.Color(), up = new THREE.Vector3(0, 1, 0);
-  for (let t = 0; t < nT; t++) {
-    const o = t * 7, x = T.getInt16(o, true) * 0.2, z = T.getInt16(o + 2, true) * 0.2;
-    const h = T.getUint8(o + 4) / 8, r = Math.max(T.getUint8(o + 5) / 20, 0.5), k = T.getUint8(o + 6);
-    const L = LOOK[SPEC[k]] || LOOK.cedar_elm, g = ground(x, z), rnd = Math.abs(Math.sin(t * 12.9898) * 43758.5453) % 1;
-    q.setFromAxisAngle(up, rnd * 6.28);
-    const cr = L.g === 'cone' ? Math.min(r, h * 0.32) * L.sx : r * L.sx;
-    m4.compose(V(x, g + h * L.cy, z), q, sc.set(cr, h * L.sy * (L.g === 'cone' ? 1 : 1), cr));
-    const m = meshes[k]; m.setMatrixAt(m.count, m4);
-    m.setColorAt(m.count++, col.setHSL(L.hsl[0] + (rnd - 0.5) * 0.03, L.hsl[1], L.hsl[2] * (0.88 + rnd * 0.24)));
-    if (k < 7) { m4.compose(V(x, g + h * 0.3, z), q, sc.set(1, h * 0.6, 1)); trunks.setMatrixAt(trunks.count++, m4); }
+  const TM = C.treeModels || {};
+  const tload = (url) => new Promise(res => new THREE.TextureLoader().load(url, t => { t.encoding = THREE.sRGBEncoding; res(t); }, undefined, () => res(null)));
+  const barkTex = await tload('bark.png'); if (barkTex) { barkTex.wrapS = barkTex.wrapT = THREE.RepeatWrapping; }
+  const barkMat = new THREE.MeshLambertMaterial({ map: barkTex, color: 0xffffff });
+  const leafMats = {};
+  await Promise.all(SPEC.map(async sp => {
+    const t = await tload('leaves_' + sp + '.png');
+    if (t) { t.generateMipmaps = false; t.minFilter = THREE.LinearFilter; }   // keep foliage full at distance
+    leafMats[sp] = new THREE.MeshLambertMaterial({ map: t, alphaTest: 0.45, side: THREE.DoubleSide });
+  }));
+  function geo(part) {
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(part.v, 3));
+    g.setAttribute('uv', new THREE.Float32BufferAttribute(part.uv, 2));
+    g.setIndex(part.f); g.computeVertexNormals(); g.computeBoundingBox(); return g;
   }
-  [...meshes, trunks].forEach(m => { m.instanceMatrix.needsUpdate = true; if (m.instanceColor) m.instanceColor.needsUpdate = true; scene.add(m); });
+  const models = {};                        // species -> [{bark, leaves, width}]
+  for (const [name, m] of Object.entries(TM)) {
+    const sp = name.replace(/_\d+$/, '');
+    const bark = geo(m.bark), leaves = geo(m.leaves);
+    const bb = leaves.boundingBox.clone().union(bark.boundingBox);
+    (models[sp] = models[sp] || []).push({ bark, leaves, width: Math.max(bb.max.x - bb.min.x, bb.max.z - bb.min.z), bb });
+  }
+  // impostor texture per species: render its first model from the side into a texture
+  const imp = {};
+  for (const sp of SPEC) {
+    const md = (models[sp] || [])[0]; if (!md) continue;
+    const rt = new THREE.WebGLRenderTarget(512, 512, { generateMipmaps: false, minFilter: THREE.LinearFilter });
+    const sc2 = new THREE.Scene();
+    sc2.add(new THREE.HemisphereLight(0xdfeefa, 0x4a5a32, 0.85)); const dl = new THREE.DirectionalLight(0xfff1d6, 0.9); dl.position.set(-4, 8, 6); sc2.add(dl);
+    sc2.add(new THREE.Mesh(md.bark, barkMat)); sc2.add(new THREE.Mesh(md.leaves, leafMats[sp]));
+    const half = Math.max(md.width, 10.4) / 2;
+    const oc = new THREE.OrthographicCamera(-half, half, half * 2 - 0.2, -0.2, 0.1, 100);
+    oc.position.set(0, 0, 50); oc.lookAt(0, 0, 0);
+    // fit: width spans [-half, half]; height 0..10 inside a square frame
+    oc.top = half * 2 - 0.2; oc.updateProjectionMatrix();
+    renderer.setRenderTarget(rt); renderer.setClearColor(0x000000, 0); renderer.clear(); renderer.render(sc2, oc);
+    renderer.setRenderTarget(null); renderer.setClearColor(sky, 1);
+    imp[sp] = { tex: rt.texture, w: half * 2, h: half * 2 };
+  }
+  // crossed-card geometry, 1 wide x 1 tall, base at y=0
+  const cardGeo = (() => {
+    const p = [], uv = [], ix = [];
+    for (const r of [0, Math.PI / 2]) {
+      const c = Math.cos(r), s_ = Math.sin(r), b0 = p.length / 3;
+      for (const [u, v] of [[0, 0], [1, 0], [1, 1], [0, 1]]) { p.push((u - 0.5) * c, v, (u - 0.5) * s_); uv.push(u, v); }
+      ix.push(b0, b0 + 1, b0 + 2, b0, b0 + 2, b0 + 3);
+    }
+    const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(p, 3));
+    g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2)); g.setIndex(ix); return g;
+  })();
+  // tree table
+  const TX = new Float32Array(nT), TZ = new Float32Array(nT), TH = new Float32Array(nT), TR = new Float32Array(nT),
+        TG = new Float32Array(nT), TK = new Uint8Array(nT), TROT = new Float32Array(nT), TV = new Uint8Array(nT), TB = new Float32Array(nT);
+  for (let t = 0; t < nT; t++) {
+    const o = t * 7; TX[t] = T.getInt16(o, true) * 0.2; TZ[t] = T.getInt16(o + 2, true) * 0.2;
+    TH[t] = T.getUint8(o + 4) / 8; TR[t] = Math.max(T.getUint8(o + 5) / 20, 0.5); TK[t] = T.getUint8(o + 6);
+    TG[t] = ground(TX[t], TZ[t]); const rnd = Math.abs(Math.sin(t * 12.9898) * 43758.5453) % 1;
+    TROT[t] = rnd * 6.283; TV[t] = Math.floor(rnd * 997) % 3; TB[t] = 0.85 + (rnd * 7.31 % 1) * 0.3;
+  }
+  const counts = new Array(SPEC.length).fill(0);
+  for (let t = 0; t < nT; t++) counts[TK[t]]++;
+  const up = new THREE.Vector3(0, 1, 0), q = new THREE.Quaternion(), sc = new THREE.Vector3(), m4 = new THREE.Matrix4(), col = new THREE.Color();
+  // per-species impostor meshes
+  const impMesh = SPEC.map((sp, i) => {
+    if (!imp[sp]) return null;
+    const mat = new THREE.MeshBasicMaterial({ map: imp[sp].tex, alphaTest: 0.3, side: THREE.DoubleSide });
+    const m = new THREE.InstancedMesh(cardGeo, mat, Math.max(counts[i], 1));
+    m.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(Math.max(counts[i], 1) * 3), 3);
+    m.count = 0; scene.add(m); return m;
+  });
+  // near models: per species x variant, bark + leaves
+  const NEAR_MAX = small ? 700 : 2200, NEAR_R = small ? 150 : 230;
+  const nearMesh = {};
+  for (const sp of SPEC) (models[sp] || []).forEach((md, v) => {
+    const b = new THREE.InstancedMesh(md.bark, barkMat, NEAR_MAX), l = new THREE.InstancedMesh(md.leaves, leafMats[sp], NEAR_MAX);
+    l.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(NEAR_MAX * 3), 3);
+    b.count = l.count = 0; b.frustumCulled = l.frustumCulled = false; scene.add(b); scene.add(l);
+    nearMesh[sp + '_' + v] = { b, l, md };
+  });
+  function scaleOf(t, md) {
+    const sy = TH[t] / 10, want = 2 * TR[t] * 1.15, natural = md.width * sy;
+    return [Math.min(Math.max(0.5 * natural + 0.5 * want, natural * 0.6), natural * 1.6) / md.width, sy];
+  }
+  let lastNear = null;
+  function updateTrees(force) {
+    const c = controls.target, cp = camera.position;
+    if (!force && lastNear && lastNear.distanceTo(c) < 25) return;
+    lastNear = c.clone();
+    const near = [];
+    for (let t = 0; t < nT; t++) {
+      const dx = TX[t] - c.x, dz = -TZ[t] - c.z, dx2 = TX[t] - cp.x, dz2 = -TZ[t] - cp.z;
+      const d = Math.min(Math.hypot(dx, dz), Math.hypot(dx2, dz2) * 1.3);
+      if (d < NEAR_R) near.push([d, t]);
+    }
+    near.sort((a, b) => a[0] - b[0]);
+    const isNear = new Uint8Array(nT);
+    for (let i = 0; i < Math.min(near.length, NEAR_MAX * 2); i++) isNear[near[i][1]] = 1;
+    for (const k in nearMesh) nearMesh[k].b.count = nearMesh[k].l.count = 0;
+    impMesh.forEach(m => m && (m.count = 0));
+    for (let t = 0; t < nT; t++) {
+      const sp = SPEC[TK[t]];
+      q.setFromAxisAngle(up, TROT[t]);
+      const nm = isNear[t] ? (nearMesh[sp + '_' + TV[t]] || nearMesh[sp + '_0']) : null;
+      if (nm && nm.l.count < NEAR_MAX) {
+        const [sx, sy] = scaleOf(t, nm.md);
+        m4.compose(V(TX[t], TG[t] - 0.15, TZ[t]), q, sc.set(sx, sy, sx));
+        nm.b.setMatrixAt(nm.b.count++, m4); nm.l.setMatrixAt(nm.l.count, m4);
+        nm.l.setColorAt(nm.l.count++, col.setScalar(TB[t]));
+        continue;
+      }
+      const m = impMesh[TK[t]]; if (!m) continue;
+      const md = (models[sp] || [])[0];
+      const [sx, sy] = scaleOf(t, md);
+      const w = imp[sp].w * sx, h = imp[sp].h * sy;      // card covers the square render frame
+      m4.compose(V(TX[t], TG[t] - 0.2 * sy, TZ[t]), q, sc.set(w, h, w));
+      m.setMatrixAt(m.count, m4); m.setColorAt(m.count++, col.setScalar(TB[t]));
+    }
+    for (const k in nearMesh) { const n = nearMesh[k]; n.b.instanceMatrix.needsUpdate = n.l.instanceMatrix.needsUpdate = true; if (n.l.instanceColor) n.l.instanceColor.needsUpdate = true; }
+    impMesh.forEach(m => { if (m) { m.instanceMatrix.needsUpdate = true; m.instanceColor.needsUpdate = true; } });
+  }
 
   // ---------- homes (footprints + LiDAR heights, hipped roofs)
   if (C.bin.hv) {
@@ -354,8 +437,12 @@ button[aria-pressed="true"] { background: var(--chip-on); color: var(--chip-on-i
   camera.position.copy(V(250, 1250, -1450)); controls.target.copy(V(-150, 0, 50));
   drawRoutings(); drawHoles();
   select(holeList(routing)[0], 'tee');
-  window.courseView = { camera, controls, V, ground, moveTo };
+  window.courseView = { camera, controls, V, ground, moveTo, updateTrees };
+  controls.addEventListener('end', () => updateTrees(false));
   status.hidden = true;
-  renderer.setAnimationLoop((now) => { if (anim) anim(now); controls.update(); renderer.render(scene, camera); });
+  let treeTick = 0;
+  renderer.setAnimationLoop((now) => { if (anim) anim(now); controls.update();
+    if (now - treeTick > 400) { treeTick = now; updateTrees(false); }
+    renderer.render(scene, camera); });
 })();
 </script>
