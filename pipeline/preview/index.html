@@ -310,18 +310,24 @@ button[aria-pressed="true"] { background: var(--chip-on); color: var(--chip-on-i
   // ---------- homes (footprints + LiDAR heights, hipped roofs)
   if (C.bin.hv) {
     const hv = new DataView(await unpack(C.bin.hv)), ht = await unpack(C.bin.ht, Uint32Array);
-    const nv = hv.byteLength / 7, hp = new Float32Array(nv * 3), hc = new Float32Array(nv * 3);
+    const nv = hv.byteLength / 10, hp = new Float32Array(nv * 3), huv = new Float32Array(nv * 2);
     for (let i = 0; i < nv; i++) {
-      const o = i * 7, m = C.homeMaterials[hv.getUint8(o + 6)];
+      const o = i * 10;
       hp[i * 3] = hv.getInt16(o, true) / 10; hp[i * 3 + 1] = (hv.getUint16(o + 2, true) / 100 - 5 + hmin) * EXAG;
       hp[i * 3 + 2] = -hv.getInt16(o + 4, true) / 10;
-      hc[i * 3] = m[0]; hc[i * 3 + 1] = m[1]; hc[i * 3 + 2] = m[2];
+      huv[i * 2] = (hv.getInt16(o + 6, true) + 15000) / 50; huv[i * 2 + 1] = (hv.getInt16(o + 8, true) + 15000) / 50;
     }
     const hg = new THREE.BufferGeometry();
-    hg.setAttribute('position', new THREE.BufferAttribute(hp, 3)); hg.setAttribute('color', new THREE.BufferAttribute(hc, 3));
+    hg.setAttribute('position', new THREE.BufferAttribute(hp, 3)); hg.setAttribute('uv', new THREE.BufferAttribute(huv, 2));
     hg.setIndex(new THREE.BufferAttribute(ht, 1));
+    const mats = await Promise.all((C.homeMaterials || []).map(async (f) => {
+      const t = f ? await tload(f) : null;
+      if (t) { t.wrapS = t.wrapT = THREE.RepeatWrapping; t.anisotropy = renderer.capabilities.getMaxAnisotropy(); }
+      return new THREE.MeshLambertMaterial({ map: t, side: THREE.DoubleSide });
+    }));
+    (C.homeGroups || []).forEach(([start, count, m]) => hg.addGroup(start * 3, count * 3, m));
     const flat = hg.toNonIndexed(); flat.computeVertexNormals();
-    scene.add(new THREE.Mesh(flat, new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide })));
+    scene.add(new THREE.Mesh(flat, mats));
   }
 
   // ---------- flags and tee markers

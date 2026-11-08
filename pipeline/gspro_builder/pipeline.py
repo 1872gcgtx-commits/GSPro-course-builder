@@ -44,7 +44,7 @@ def log(msg: str) -> None:
     print(f"[gspro-builder] {msg}", flush=True)
 
 
-def fetch(cfg: CourseConfig, what: tuple[str, ...] = ("dem", "imagery", "layout", "buildings")) -> None:
+def fetch(cfg: CourseConfig, what: tuple[str, ...] = ("dem", "imagery", "layout", "buildings", "roads")) -> None:
     d = cfg.data_dir
     d.mkdir(parents=True, exist_ok=True)
     if "dem" in what:
@@ -91,6 +91,13 @@ def fetch(cfg: CourseConfig, what: tuple[str, ...] = ("dem", "imagery", "layout"
             log(f"  {len(gj['features'])} footprints")
         except Exception as e:   # homes are optional scenery
             log(f"  building footprints unavailable ({e}); homes will be skipped")
+    if "roads" in what and cfg.homes.get("enabled", True):
+        from .sources.roads import fetch_roads
+        log("downloading streets (OpenStreetMap) to face homes and lay driveways")
+        try:
+            (d / "roads.geojson").write_text(json.dumps(fetch_roads(cfg.frame, log=log)))
+        except Exception as e:
+            log(f"  streets unavailable ({e}); homes face their longest wall, no driveways")
 
 
 def _layout_geojson(cfg: CourseConfig) -> dict:
@@ -198,7 +205,10 @@ def build(cfg: CourseConfig) -> dict:
                                        masks["building"] if masks is not None else None, naip,
                                        cfg.layout_shift_m, ring, log=log,
                                        naip4=np.load(data / "naip4.npy", mmap_mode="r") if (data / "naip4.npy").exists() else None,
-                                       naip4_meta=json.loads((data / "naip4.json").read_text()) if (data / "naip4.json").exists() else None)
+                                       naip4_meta=json.loads((data / "naip4.json").read_text()) if (data / "naip4.json").exists() else None,
+                                       roads=[[cfg.frame.to_local(lo, la) for lo, la in f_["geometry"]["coordinates"]]
+                                              for f_ in json.loads((data / "roads.geojson").read_text())["features"]]
+                                       if (data / "roads.geojson").exists() else None)
         homes_rep.update(write_homes(homes, out / "homes", hcfg))
         before = len(trees)
         trees = homes_mask_filter(trees, homes)

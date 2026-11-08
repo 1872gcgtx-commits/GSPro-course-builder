@@ -122,32 +122,37 @@ for f in (Path(OUT) / 'tree_models').glob('*.png'):
 # ---- homes (output/homes/homes.obj): vertices + triangles + a finish index per vertex
 hobj = Path(O) / 'homes' / 'homes.obj'
 if hobj.exists():
-    import re
-    mtl = {}
+    import re, shutil
+    names, tex = [], {}
     for blk in (Path(O) / 'homes' / 'homes.mtl').read_text().split('newmtl ')[1:]:
-        name = blk.split()[0]; kd = re.search(r'Kd ([\d.]+) ([\d.]+) ([\d.]+)', blk)
-        mtl[name] = [float(kd.group(i)) for i in (1, 2, 3)]
-    names = list(mtl)
-    vs, tris, vm, cur = [], [], {}, None
+        name = blk.split()[0]; m_ = re.search(r'map_Kd (\S+)', blk)
+        names.append(name); tex[name] = m_.group(1) if m_ else None
+        if m_:
+            shutil.copy(Path(O) / 'homes' / m_.group(1), Path(OUT) / ('home_' + m_.group(1)))
+    vs, vts, tris, cur = [], [], [], 0
     for line in open(hobj):
         if line.startswith('v '):
-            _, a, b, c = line.split(); vs.append((float(a), float(b), -float(c)))   # back to z north
+            _, a_, b_, c_ = line.split(); vs.append((float(a_), float(b_), -float(c_)))   # back to z north
+        elif line.startswith('vt '):
+            _, u_, v_ = line.split(); vts.append((float(u_), float(v_)))
         elif line.startswith('usemtl'):
             cur = names.index(line.split()[1])
         elif line.startswith('f '):
-            t = [int(x.split('/')[0]) - 1 for x in line.split()[1:]]
-            tris.append(t)
-            for i in t:
-                vm[i] = cur
-    V = np.array(vs); T = np.array(tris, '<u4')
-    keep = (V[:, 0] > x0) & (V[:, 0] < x1) & (V[:, 2] > z0) & (V[:, 2] < z1)
-    T = T[keep[T].all(1)]
-    hv = np.zeros(len(V), dtype=[('x', '<i2'), ('y', '<u2'), ('z', '<i2'), ('m', 'u1')])
+            tris.append([int(x.split('/')[0]) - 1 for x in line.split()[1:]] + [cur])
+    V = np.array(vs); UVa = np.array(vts); TT = np.array(tris, np.int64)
+    keep = ((V[:, 0] > x0) & (V[:, 0] < x1) & (V[:, 2] > z0) & (V[:, 2] < z1))
+    TT = TT[keep[TT[:, :3]].all(1)]
+    TT = TT[np.argsort(TT[:, 3], kind='stable')]
+    groups = [[int(np.searchsorted(TT[:, 3], k)), int((TT[:, 3] == k).sum()), int(k)] for k in np.unique(TT[:, 3])]
+    hv = np.zeros(len(V), dtype=[('x', '<i2'), ('y', '<u2'), ('z', '<i2'), ('u', '<i2'), ('v', '<i2')])
     hv['x'] = np.round(V[:, 0] * 10).astype('<i2'); hv['z'] = np.round(V[:, 2] * 10).astype('<i2')
     hv['y'] = np.round((V[:, 1] - hmin + 5) * 100).clip(0, 65535).astype('<u2')
-    hv['m'] = [vm.get(i, 0) for i in range(len(V))]
+    uvw = np.mod(UVa, 600.0) * 50                     # tiling textures: wrap large UVs into range
+    hv['u'] = np.round(uvw[:, 0] - 15000).astype('<i2'); hv['v'] = np.round(uvw[:, 1] - 15000).astype('<i2')
+    T = TT[:, :3].astype('<u4')
     meta['bin']['hv'] = pack(hv); meta['bin']['ht'] = pack(T)
-    meta['homeMaterials'] = [mtl[n] for n in names]
+    meta['homeGroups'] = groups
+    meta['homeMaterials'] = [('home_' + tex[n]) if tex[n] else None for n in names]
     print(f"homes: {len(V)} vertices, {len(T)} triangles")
 json.dump(meta, open(OUT + '/data.json', 'w'), separators=(',', ':'))
 print(f"{nx}x{nz} grid, {len(tb)} trees -> {OUT}/data.json, {OUT}/tex.jpg")

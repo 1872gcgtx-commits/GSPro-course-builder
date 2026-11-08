@@ -1,7 +1,7 @@
 """Command line: python -m gspro_builder <command> <course dir>
 
   new   <dir> --lat --lon [--size 2000] [--name]   scaffold courses/<slug>/course.toml
-  fetch <dir> [--only dem,imagery,layout,buildings] download public data
+  fetch <dir> [--only dem,imagery,layout,buildings,roads] download public data
   build <dir>                                      produce all outputs
   all   <dir>                                      fetch + build
   demo  <dir>                                      synthetic offline course, then build
@@ -84,7 +84,7 @@ def main(argv=None) -> None:
     n.add_argument("--name", default=None)
     f = sub.add_parser("fetch")
     f.add_argument("dir")
-    f.add_argument("--only", default="dem,imagery,layout,buildings")
+    f.add_argument("--only", default="dem,imagery,layout,buildings,roads")
     for c in ("build", "all", "demo"):
         sub.add_parser(c).add_argument("dir")
     tl = sub.add_parser("tiles")

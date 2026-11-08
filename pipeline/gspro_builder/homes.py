@@ -175,7 +175,7 @@ def _roof_class(rgb):
 
 def build_homes(footprints: dict, frame, dem, base_elev, layout, cfg: HomesConfig,
                 chm=None, building_mask=None, naip=None, naip_shift=(0.0, 0.0), boundary=None, log=print,
-                naip4=None, naip4_meta=None):
+                naip4=None, naip4_meta=None, roads=None):
     import shapely
     from shapely.geometry import Polygon
     from scipy.spatial import Delaunay
@@ -331,54 +331,214 @@ def build_homes(footprints: dict, frame, dem, base_elev, layout, cfg: HomesConfi
                       "height_source": src, "lidar_coverage": round(lidar_cov, 2),
                       "wall": wall, "roof": _roof_class(roof_rgb), "roof_rgb": [round(v, 3) for v in roof_rgb],
                       "_roof": (np.c_[pts[:, 0], zr, pts[:, 1]], tri), "_wall_ring": np.array(P.exterior.coords)[:-1],
-                      "_ground": ground, "_wall_top": wall_top})
+                      "_ground": ground, "_wall_top": wall_top, "_eave_o": eave_o, "_cap": cap, "_Po": Po, "_P": P})
+    _dress(homes, roads, dem, base_elev, cfg, rng)
     return homes, {"count": len(homes), "registration_shift_m": list(shift), "registration": reg,
                    "dropped_on_course": dropped_course, "from_footprints": n_ms, "from_aerial": len(polys) - n_ms,
                    "height_sources": {k: sum(h_["height_source"] == k for h_ in homes) for k in ("lidar", "footprint", "default")}}
 
 
-def _mesh(home):
-    """Triangles in the internal frame (x east, y up, z north): roof + walls, with UVs."""
-    V, T, UV, M = [], [], [], []
+def _dress(homes, roads, dem, base_elev, cfg, rng):
+    """Street side, front door, garage + driveway, chimney for each house."""
+    import shapely
+    from shapely.geometry import LineString, Point
+    from shapely.ops import nearest_points
+    net = shapely.union_all([LineString(r) for r in roads if len(r) >= 2]) if roads else None
+    for hm in homes:
+        P, ring = hm["_P"], hm["_wall_ring"]
+        c = np.array([P.centroid.x, P.centroid.y])
+        n_e = len(ring)
+        edges = [(ring[i], ring[(i + 1) % n_e]) for i in range(n_e)]
+        lens = np.array([np.hypot(*(b - a)) for a, b in edges])
+        normals = np.array([np.array([(b - a)[1], -(b - a)[0]]) / max(np.hypot(*(b - a)), 1e-6) for a, b in edges])
+        road_pt = None
+        if net is not None and not net.is_empty:
+            q = nearest_points(Point(*c), net)[1]
+            if Point(*c).distance(q) < 90:
+                road_pt = np.array([q.x, q.y])
+        if road_pt is not None:
+            d = (road_pt - c) / max(np.linalg.norm(road_pt - c), 1e-6)
+            score = normals @ d + 0.02 * np.minimum(lens, 15)
+        else:
+            score = lens.copy()                                  # no street known: longest wall
+        score[lens < 3.5] = -9
+        fe = int(np.argmax(score))
+        a, b = edges[fe]; L = lens[fe]; t = (b - a) / max(L, 1e-6); nrm = normals[fe]
+        hm["front_edge"] = fe
+        garage = hm["area_m2"] >= 140 and L >= 9.5 and road_pt is not None and rng.random() < 0.85
+        g_at = lambda p: float(dem.sample(np.array([p[0]]), np.array([p[1]]))[0] - base_elev)  # noqa: E731
+        parts = {}
+        if garage:
+            left = rng.random() < 0.5
+            s0 = 0.8 if left else L - 0.8 - 4.9
+            gc = a + t * (s0 + 2.45)
+            parts["garage"] = (a + t * s0, a + t * (s0 + 4.9), g_at(gc + nrm * 1.0))
+            door_s = (s0 + 4.9 + 1.6) if left else (s0 - 2.6)
+            door_s = float(np.clip(door_s, 0.6, L - 1.6))
+            # driveway: from the garage straight out to the street
+            q = nearest_points(Point(*(gc + nrm * 0.5)), net)[1]
+            end = np.array([q.x, q.y])
+            dl = np.linalg.norm(end - gc)
+            if 3 < dl < 70:
+                k = max(2, int(dl / 2.0))
+                cl = [gc + nrm * 0.1 + (end - gc - nrm * 0.1) * i / k for i in range(k + 1)]
+                hs = dem.sample(np.array([p[0] for p in cl]), np.array([p[1] for p in cl])) - base_elev
+                parts["driveway"] = (np.array(cl), hs + 0.06)
+        else:
+            door_s = L / 2 - 0.5
+        dp = a + t * door_s
+        parts["door"] = (dp, dp + t * 1.0, g_at(dp + t * 0.5 + nrm * 1.0))
+        # chimney on a third of the larger homes, near a side or back wall
+        if hm["area_m2"] >= 180 and rng.random() < 0.35:
+            others = [i for i in range(n_e) if i != fe and lens[i] >= 4]
+            if others:
+                i = others[int(rng.integers(len(others)))]
+                ea, eb = edges[i]; et = (eb - ea) / lens[i]
+                cpos = ea + et * lens[i] * rng.uniform(0.3, 0.7) - normals[i] * 0.9
+                if P.contains(Point(*cpos)):
+                    parts["chimney"] = (cpos, et, normals[i])
+        hm["_parts"] = parts
+        hm["garage"] = "garage" in parts
+        hm["chimney"] = "chimney" in parts
+
+
+class _Mesh:
+    """Triangle soup with UVs, a material and a facing hint per triangle (internal frame)."""
+    def __init__(self):
+        self.V, self.UV, self.T, self.M, self.N = [], [], [], [], []
+
+    def quad(self, p, uv, mat, n):
+        b = len(self.V); self.V += list(p); self.UV += list(uv)
+        self.T += [(b, b + 1, b + 2), (b, b + 2, b + 3)]; self.M += [mat, mat]; self.N += [n, n]
+
+    def tri(self, p, uv, mat, n):
+        b = len(self.V); self.V += list(p); self.UV += list(uv)
+        self.T.append((b, b + 1, b + 2)); self.M.append(mat); self.N.append(n)
+
+
+def _v3(xz, y):
+    return np.array([xz[0], y, xz[1]], float)
+
+
+def _mesh(home, cfg=None):
+    """Roof (shingle UVs along each face), soffit, fascia, walls, foundation band,
+    front door, garage door, chimney and driveway. Internal frame: x east, y up, z north."""
+    from scipy.spatial import Delaunay
+    import shapely
+    mk = _Mesh()
+    up = np.array([0.0, 1.0, 0.0])
+    # --- roof: per-triangle UVs (u along the eave, v up the slope) so shingle rows follow each face
     rv, rt = home["_roof"]
-    V.append(rv); UV.append(np.c_[rv[:, 0] / 4, rv[:, 2] / 4]); T.append(rt); M += [home["roof"]] * len(rt)
-    ring = home["_wall_ring"]; g, t = home["_ground"], home["_wall_top"]
-    off = len(rv); along = 0.0
-    wv, wt, wuv = [], [], []
+    for t_ in rt:
+        P3 = rv[t_]
+        nrm = np.cross(P3[1] - P3[0], P3[2] - P3[0]); nrm = nrm / (np.linalg.norm(nrm) + 1e-9)
+        if nrm[1] < 0:
+            nrm = -nrm
+        h = np.array([nrm[0], nrm[2]]); hl = np.linalg.norm(h)
+        if hl < 1e-3:
+            uv = [(p[0] / 4, p[2] / 4) for p in P3]
+        else:
+            down = h / hl; along = np.array([-down[1], down[0]])
+            slope = math.sqrt(1 + (hl / max(nrm[1], 1e-3)) ** 2)
+            uv = [(float(np.dot([p[0], p[2]], along)) / 4, -float(np.dot([p[0], p[2]], down)) * slope / 4) for p in P3]
+        mk.tri(P3, uv, home["roof"], up)
+    ring = home["_wall_ring"]; g, top = home["_ground"], home["_wall_top"]
+    eo = home["_eave_o"]; Po, P = home["_Po"], home["_P"]
+    # --- soffit (underside of the overhang) and fascia board around the eaves
+    sof = Po.difference(P)
+    if not sof.is_empty:
+        polys = sof.geoms if sof.geom_type == "MultiPolygon" else [sof]
+        for pg in polys:
+            pts = np.vstack([np.array(r.coords)[:-1] for r in [pg.exterior, *pg.interiors]])
+            if len(pts) < 3:
+                continue
+            tri = Delaunay(pts).simplices
+            cen = pts[tri].mean(1)
+            tri = tri[shapely.contains_xy(pg, cen[:, 0], cen[:, 1])]
+            for t_ in tri:
+                mk.tri([_v3(pts[i], eo - 0.02) for i in t_], [(pts[i][0] / 4, pts[i][1] / 4) for i in t_], "Home_Trim", -up)
+    pr = np.array(Po.exterior.coords)[:-1]
+    for i in range(len(pr)):
+        a, b = pr[i], pr[(i + 1) % len(pr)]
+        n2 = np.array([(b - a)[1], -(b - a)[0]]); n2 /= max(np.linalg.norm(n2), 1e-6)
+        mk.quad([_v3(a, eo - 0.22), _v3(b, eo - 0.22), _v3(b, eo + 0.01), _v3(a, eo + 0.01)],
+                [(0, 0), (1, 0), (1, 1), (0, 1)], "Home_Trim", np.array([n2[0], 0, n2[1]]))
+    # --- walls (3 m window bays, one storey per 3 m) and a stone foundation band
+    along = 0.0
     for i in range(len(ring)):
         a, b = ring[i], ring[(i + 1) % len(ring)]
         L = float(np.hypot(*(b - a)))
-        k = len(wv)
-        wv += [(a[0], g, a[1]), (b[0], g, b[1]), (b[0], t, b[1]), (a[0], t, a[1])]
-        wuv += [(along / 3, 0), ((along + L) / 3, 0), ((along + L) / 3, (t - g) / 3), (along / 3, (t - g) / 3)]
-        wt += [(off + k, off + k + 1, off + k + 2), (off + k, off + k + 2, off + k + 3)]
+        n2 = np.array([(b - a)[1], -(b - a)[0]]) / max(L, 1e-6); n3 = np.array([n2[0], 0, n2[1]])
+        u0, u1 = along / 3, (along + L) / 3
+        mk.quad([_v3(a, g), _v3(b, g), _v3(b, top), _v3(a, top)],
+                [(u0, 0), (u1, 0), (u1, (top - g) / 3), (u0, (top - g) / 3)], home["wall"], n3)
+        fa, fb = a + n2 * 0.03, b + n2 * 0.03
+        mk.quad([_v3(fa, g), _v3(fb, g), _v3(fb, g + 0.7), _v3(fa, g + 0.7)],
+                [(u0, 0), (u1, 0), (u1, 0.93), (u0, 0.93)], "Home_Foundation", n3)
         along += L
-    V.append(np.array(wv)); UV.append(np.array(wuv)); T.append(np.array(wt)); M += [home["wall"]] * len(wt)
-    return np.vstack(V), np.vstack(UV), np.vstack(T), M
+    parts = home.get("_parts", {})
+    fe = home.get("front_edge", 0)
+    a, b = ring[fe], ring[(fe + 1) % len(ring)]
+    L = float(np.hypot(*(b - a))); n2 = np.array([(b - a)[1], -(b - a)[0]]) / max(L, 1e-6); n3 = np.array([n2[0], 0, n2[1]])
+    if "garage" in parts:
+        p0, p1, gy = parts["garage"]; p0, p1 = p0 + n2 * 0.06, p1 + n2 * 0.06
+        y0 = max(gy, g + 0.25)
+        mk.quad([_v3(p0, y0), _v3(p1, y0), _v3(p1, y0 + 2.15), _v3(p0, y0 + 2.15)],
+                [(0, 0), (1, 0), (1, 1), (0, 1)], "Home_GarageDoor", n3)
+    if "door" in parts:
+        p0, p1, gy = parts["door"]; p0, p1 = p0 + n2 * 0.06, p1 + n2 * 0.06
+        y0 = max(gy + 0.15, g + 0.4)
+        mk.quad([_v3(p0, y0), _v3(p1, y0), _v3(p1, y0 + 2.3), _v3(p0, y0 + 2.3)],
+                [(0, 0), (1, 0), (1, 1), (0, 1)], "Home_FrontDoor", n3)
+        # small porch step in concrete
+        s0, s1 = p0 - (p1 - p0) * 0.4 + n2 * 0.0, p1 + (p1 - p0) * 0.4
+        mk.quad([_v3(s0, y0), _v3(s1, y0), _v3(s1 + n2 * 1.2, y0), _v3(s0 + n2 * 1.2, y0)],
+                [(0, 0), (0.5, 0), (0.5, 0.3), (0, 0.3)], "Home_Concrete", up)
+    if "chimney" in parts:
+        c, et, en = parts["chimney"]
+        ridge = home["ridge_y"]
+        y0, y1 = home["_wall_top"] - 0.3, ridge + 0.9
+        cs = [c - et * 0.9 - en * 0.5, c + et * 0.9 - en * 0.5, c + et * 0.9 + en * 0.5, c - et * 0.9 + en * 0.5]
+        for i in range(4):
+            q0, q1 = cs[i], cs[(i + 1) % 4]
+            sd = (q0 + q1) / 2 - c; sd = sd / max(np.linalg.norm(sd), 1e-6)
+            w_ = float(np.linalg.norm(q1 - q0)) / 3
+            mk.quad([_v3(q0, y0), _v3(q1, y0), _v3(q1, y1), _v3(q0, y1)],
+                    [(0, 0), (w_, 0), (w_, (y1 - y0) / 3), (0, (y1 - y0) / 3)], "Home_Wall_Stone", np.array([sd[0], 0, sd[1]]))
+        mk.quad([_v3(q, y1) for q in cs], [(0, 0), (0.3, 0), (0.3, 0.3), (0, 0.3)], "Home_Trim", up)
+    if "driveway" in parts:
+        cl, hs = parts["driveway"]
+        d = cl[-1] - cl[0]; d = d / max(np.linalg.norm(d), 1e-6); side = np.array([-d[1], d[0]]) * 2.75
+        for i in range(len(cl) - 1):
+            q = [cl[i] - side, cl[i] + side, cl[i + 1] + side, cl[i + 1] - side]
+            y = [hs[i], hs[i], hs[i + 1], hs[i + 1]]
+            v0, v1 = i * 2.0 / 4, (i + 1) * 2.0 / 4
+            mk.quad([_v3(q[k], y[k]) for k in range(4)], [(0, v0), (1.4, v0), (1.4, v1), (0, v1)], "Home_Concrete", up)
+    return (np.array(mk.V, float), np.array(mk.UV, float), np.array(mk.T, int), mk.M, np.array(mk.N, float))
 
 
-def _outward(v_obj, tri, center_obj, roof_mask):
-    """Flip triangles so right-handed normals face out (walls) or up (roofs)."""
+def _face(v_obj, tri, hint_obj):
+    """Flip triangles so right-handed normals agree with the facing hint."""
     a, b, c = v_obj[tri[:, 0]], v_obj[tri[:, 1]], v_obj[tri[:, 2]]
-    nrm = np.cross(b - a, c - a)
-    out = np.where(roof_mask[:, None], np.array([[0, 1, 0]]), (a + b + c) / 3 - center_obj)
-    flip = np.einsum("ij,ij->i", nrm, out) < 0
+    flip = np.einsum("ij,ij->i", np.cross(b - a, c - a), hint_obj) < 0
     tri = tri.copy(); tri[flip] = tri[flip][:, [0, 2, 1]]
     return tri
 
 
 def write_homes(homes: list[dict], out_dir: Path, cfg: HomesConfig) -> dict:
+    from .home_textures import write_textures
     out_dir.mkdir(parents=True, exist_ok=True)
+    tex = write_textures(out_dir, [w[0] for w in WALLS], list(ROOFS))
     with open(out_dir / "homes.mtl", "w") as f:
-        for name, rgb, _ in WALLS:
-            f.write(f"newmtl {name}\nKd {rgb[0]:.3f} {rgb[1]:.3f} {rgb[2]:.3f}\nKs 0 0 0\n\n")
-        for name, rgb in ROOFS.items():
-            f.write(f"newmtl {name}\nKd {rgb[0]:.3f} {rgb[1]:.3f} {rgb[2]:.3f}\nKs 0.05 0.05 0.05\n\n")
+        for name, fn in tex.items():
+            ks = "0.05 0.05 0.05" if "Roof" in name else "0 0 0"
+            f.write(f"newmtl {name}\nKd 1 1 1\nKs {ks}\nmap_Kd {fn}\n\n")
     tiles: dict = {}
     for hm in homes:
         c = np.mean(hm["_wall_ring"], axis=0)
         tiles.setdefault((int(math.floor(c[0] / cfg.tile_m)), int(math.floor(c[1] / cfg.tile_m))), []).append(hm)
     nv = nt = 0
+    flipz = np.array([1.0, 1.0, -1.0])
     with open(out_dir / "homes.obj", "w") as f:
         f.write("# Homes around the course: metres, right-handed Y-up, x east, z SOUTH (as course_surfaces.obj)\n")
         f.write("mtllib homes.mtl\n")
@@ -387,16 +547,17 @@ def write_homes(homes: list[dict], out_dir: Path, cfg: HomesConfig) -> dict:
             groups: dict = {}
             verts, uvs = [], []
             for hm in hs:
-                v, uv, t, mats = _mesh(hm)
-                vo = v * np.array([1.0, 1.0, -1.0])
-                cen = np.array([np.mean(hm["_wall_ring"][:, 0]), 0.0, -np.mean(hm["_wall_ring"][:, 1])])
-                roof_mask = np.array([m.startswith("Home_Roof") for m in mats])
-                cen_rows = np.repeat(cen[None], len(t), 0); cen_rows[:, 1] = vo[t].mean(1)[:, 1]
-                t = _outward(vo, t, cen_rows, roof_mask)
+                v, uv, t, mats, hint = _mesh(hm, cfg)
+                if not len(t):
+                    continue
+                vo = v * flipz
+                t = _face(vo, t, hint * flipz)
                 o = sum(len(x) for x in verts)
                 verts.append(vo); uvs.append(uv)
                 for tri, m in zip(t + o, mats):
                     groups.setdefault(m, []).append(tri)
+            if not verts:
+                continue
             V = np.vstack(verts); UV = np.vstack(uvs)
             name = f"Homes_{tx + 50:02d}_{tz + 50:02d}"
             f.write(f"o {name}\ng {name}\n")
@@ -410,7 +571,8 @@ def write_homes(homes: list[dict], out_dir: Path, cfg: HomesConfig) -> dict:
             base += len(V); nv += len(V)
     pub = [{k: v for k, v in hm.items() if not k.startswith("_")} for hm in homes]
     (out_dir / "homes.json").write_text(json.dumps({"homes": pub}, indent=0))
-    return {"tiles": len(tiles), "vertices": nv, "triangles": nt}
+    return {"tiles": len(tiles), "vertices": nv, "triangles": nt,
+            "garages": sum(h.get("garage", False) for h in homes), "chimneys": sum(h.get("chimney", False) for h in homes)}
 
 
 def homes_mask_filter(trees: list[dict], homes: list[dict], clear_m: float = 1.0) -> list[dict]:

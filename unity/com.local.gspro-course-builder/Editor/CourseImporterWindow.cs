@@ -25,7 +25,7 @@ namespace GSProCourseBuilder.Editor
     public class CourseImporterWindow : EditorWindow
     {
         string outputDir = "";
-        bool useOverlay, importHoles = true, importTrees = true, importWater = true, importMeshes;
+        bool useOverlay, importHoles = true, importTrees = true, importWater = true, importMeshes, importHomes = true;
         float layerTileSize = 4f;
         GameObject deciduousPrefab, coniferPrefab;
         static readonly string[] Species = { "live_oak", "ashe_juniper", "cedar_elm", "pecan", "bald_cypress",
@@ -75,6 +75,7 @@ namespace GSProCourseBuilder.Editor
                         speciesPrefabs[i] = (GameObject)EditorGUILayout.ObjectField("    " + Species[i], speciesPrefabs[i], typeof(GameObject), false);
             }
             importMeshes = EditorGUILayout.Toggle("Course surface meshes (OBJ)", importMeshes);
+            importHomes = EditorGUILayout.Toggle("Homes (homes/homes.obj)", importHomes);
             EditorGUILayout.HelpBox("Empty slots get placeholder assets (flat-colour layers, simple trees, " +
                                     "blue water). Swap in real grass/sand textures, SpeedTree/tree prefabs " +
                                     "and your water shader afterwards - re-importing keeps your layer textures.",
@@ -84,7 +85,7 @@ namespace GSProCourseBuilder.Editor
                 Import(new Options
                 {
                     dir = outputDir, overlay = useOverlay, holes = importHoles, trees = importTrees,
-                    water = importWater, meshes = importMeshes, tile = layerTileSize,
+                    water = importWater, meshes = importMeshes, homes = importHomes, tile = layerTileSize,
                     deciduous = deciduousPrefab, conifer = coniferPrefab, waterMat = waterMaterial,
                     species = (GameObject[])speciesPrefabs.Clone(),
                 });
@@ -94,7 +95,7 @@ namespace GSProCourseBuilder.Editor
         public class Options
         {
             public string dir;
-            public bool overlay, holes = true, trees = true, water = true, meshes;
+            public bool overlay, holes = true, trees = true, water = true, meshes, homes = true;
             public float tile = 4f;
             public GameObject deciduous, conifer;
             public GameObject[] species;
@@ -141,6 +142,11 @@ namespace GSProCourseBuilder.Editor
                 {
                     EditorUtility.DisplayProgressBar("GSPro Builder", "Trees", 0.5f);
                     ImportTrees(o.dir, terrain, assetDir, o);
+                }
+                if (o.homes)
+                {
+                    EditorUtility.DisplayProgressBar("GSPro Builder", "Homes", 0.6f);
+                    ImportHomes(o.dir, root, assetDir);
                 }
                 if (o.water)
                 {
@@ -524,6 +530,35 @@ namespace GSProCourseBuilder.Editor
             var prefab = PrefabUtility.SaveAsPrefabAsset(go, prefabPath);
             Object.DestroyImmediate(go);
             return prefab;
+        }
+
+        // ---------------------------------------------------------------- homes
+        /// homes/homes.obj + .mtl + textures: copied into the project and placed like the
+        /// course surface meshes (OBJ is x east, z south; Unity's importer mirrors X, so the
+        /// model is turned 180 degrees about Y to restore east/north).
+        static void ImportHomes(string dir, GameObject root, string assetDir)
+        {
+            var src = Path.Combine(dir, "homes");
+            if (!File.Exists(Path.Combine(src, "homes.obj"))) return;
+            var dst = $"{assetDir}/Homes";
+            Directory.CreateDirectory(dst);
+            foreach (var f in Directory.GetFiles(src))
+            {
+                var ext = Path.GetExtension(f).ToLowerInvariant();
+                if (ext == ".obj" || ext == ".mtl" || ext == ".png") File.Copy(f, $"{dst}/{Path.GetFileName(f)}", true);
+            }
+            AssetDatabase.Refresh();
+            var model = AssetDatabase.LoadAssetAtPath<GameObject>($"{dst}/homes.obj");
+            if (!model) { Debug.LogWarning("[GSPro Builder] homes.obj did not import"); return; }
+            var old = root.transform.Find("Homes");
+            if (old) Object.DestroyImmediate(old.gameObject);
+            var inst = (GameObject)PrefabUtility.InstantiatePrefab(model);
+            inst.name = "Homes";
+            inst.transform.SetParent(root.transform, false);
+            inst.transform.localRotation = Quaternion.Euler(0f, 180f, 0f);
+            foreach (var r in inst.GetComponentsInChildren<Renderer>())
+                r.gameObject.isStatic = true;
+            Debug.Log($"[GSPro Builder] Homes placed ({inst.transform.childCount} tiles)");
         }
 
         // ---------------------------------------------------------------- water
