@@ -175,9 +175,25 @@ def clip_to_boundary(trees: list[dict], boundary_local: list, margin_m: float) -
     return [t for t, keep in zip(trees, inside | near) if keep]
 
 
+TREE_COLUMNS = ["x", "y", "z", "height_m", "crown_radius_m", "type", "source", "species", "species_conf",
+                "crown_base_m", "size_class", "tint_r", "tint_g", "tint_b", "rotation_deg"]
+
+
 def write_trees_csv(trees: list[dict], path: Path) -> None:
+    """Unity frame. The first 7 columns are the original format; species columns follow."""
     with open(path, "w", newline="") as f:
         w = csv.writer(f)
-        w.writerow(["x", "y", "z", "height_m", "crown_radius_m", "type", "source"])
+        w.writerow(TREE_COLUMNS)
         for t in trees:
-            w.writerow([t["x"], t["y"], t["z"], t["height_m"], t["crown_radius_m"], t["type"], t["source"]])
+            tint = t.get("tint", [1.0, 1.0, 1.0])
+            w.writerow([t["x"], t["y"], t["z"], t["height_m"], t["crown_radius_m"], t["type"], t["source"],
+                        t.get("species", t["type"]), t.get("species_conf", ""), t.get("crown_base_m", ""),
+                        t.get("size_class", ""), tint[0], tint[1], tint[2], t.get("rotation_deg", 0)])
+
+
+def write_shrubs_csv(shrubs: list[dict], path: Path) -> None:
+    with open(path, "w", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(["x", "y", "z", "height_m", "kind", "rotation_deg"])
+        for s in shrubs:
+            w.writerow([s["x"], s["y"], s["z"], s["height_m"], s["kind"], s["rotation_deg"]])

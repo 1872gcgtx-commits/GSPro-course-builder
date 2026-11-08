@@ -52,6 +52,7 @@ first_cut_width_m = 2.0    # intermediate rough around fairways
 
 [foliage]
 source = "auto"            # auto (LiDAR canopy, else scatter in `trees` areas) | lidar | scatter | none
+boundary_margin_m = 400    # trees this far around the property (matches [homes] margin_m)
 min_height_m = 3.0
 keep_clear_m = 1.0
 
@@ -66,3 +67,6 @@ offset_m = 0.0             # lift course-surface meshes above terrain (e.g. 0.02
 
 [homes]                    # houses around the course (Microsoft open footprints + LiDAR heights)
 margin_m = 400             # build homes within this distance of the property outline
+
+[species]                  # tree species (live oak, Ashe juniper, cedar elm, pecan, cypress, mesquite, hackberry)
+shrubs = true              # understory brush / young cedar as shrubs.csv

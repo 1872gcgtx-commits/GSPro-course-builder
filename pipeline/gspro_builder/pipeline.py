@@ -26,10 +26,11 @@ import numpy as np
 
 from .config import CourseConfig
 from .course_meshes import build_meshes, write_obj as write_surface_obj, write_water_json
-from .foliage import FoliageConfig, detect_trees, scatter_trees, write_trees_csv
+from .foliage import FoliageConfig, detect_trees, scatter_trees, write_shrubs_csv, write_trees_csv
 from .grading import GradingConfig, grade
 from .holes import build_holes, write_holes
 from .homes import HomesConfig, build_homes, homes_mask_filter, write_homes
+from .species import SPECIES, SpeciesConfig, assign_species, detect_shrubs, refine_trees
 from .layout import load_layout
 from .mesh import write_obj
 from .raster import rasterize_instances
@@ -166,6 +167,25 @@ def build(cfg: CourseConfig) -> dict:
         ring = [cfg.frame.to_local(lon, lat) for lon, lat in cfg.boundary]
         trees = clip_to_boundary(trees, ring, fcfg.boundary_margin_m)
         log(f"trees: kept {len(trees)} of {before} inside the property outline (+{fcfg.boundary_margin_m:g} m)")
+    # ---- trees up to the date of the aerial (gone / grown since the LiDAR), then species
+    scfg = SpeciesConfig.from_dict(cfg.species)
+    naip4 = np.load(data / "naip4.npy", mmap_mode="r") if (data / "naip4.npy").exists() else None
+    naip4_meta = json.loads((data / "naip4.json").read_text()) if naip4 is not None else None
+    tree_rep, shrubs = {}, []
+    excl = wat = None
+    ring_l = [cfg.frame.to_local(lon, lat) for lon, lat in cfg.boundary] if cfg.boundary else None
+    if chm is not None:
+        from .foliage import _exclusion
+        from .raster import rasterize_instances
+        excl = _exclusion(layout, cfg.frame, chm.shape[0], fcfg.keep_clear_m,
+                          masks["building"] if masks is not None else None)
+        wat = rasterize_instances([s_ for s_ in layout.surfaces if s_.kind == "water"], cfg.frame, chm.shape[0]) > 0
+        if masks is not None:
+            wat |= masks["water"]
+        excl |= wat
+    if scfg.enabled and chm is not None and trees and trees[0].get("source") == "lidar":
+        trees, tree_rep = refine_trees(trees, chm, cfg.frame, layout, dem, base, naip4, naip4_meta,
+                                       cfg.layout_shift_m, ring_l, fcfg.boundary_margin_m, excl, log=log)
     homes_rep = None
     hcfg = HomesConfig.from_dict(cfg.homes)
     fp_path = cfg.data_dir / "buildings" / "ms_buildings.geojson"
@@ -183,6 +203,29 @@ def build(cfg: CourseConfig) -> dict:
         trees = homes_mask_filter(trees, homes)
         log(f"homes: {len(homes)} houses ({homes_rep['triangles']} triangles); "
             f"{before - len(trees)} trees removed from house lots")
+    if scfg.enabled and chm is not None and trees:
+        trees, counts = assign_species(trees, chm, cfg.frame, naip4, naip4_meta, cfg.layout_shift_m, wat, dem,
+                                       seed=scfg.seed)
+        tree_rep["species"] = counts
+        log("trees by species: " + ", ".join(f"{k} {v}" for k, v in sorted(counts.items(), key=lambda kv: -kv[1])))
+        if scfg.shrubs:
+            sex = excl.copy()
+            if ring_l:
+                from .raster import rasterize_instances as _ri
+                from .layout import Surface as _S
+                zone_m = _ri([_S("x", [ring_l], None, {})], cfg.frame, chm.shape[0]) > 0
+                from scipy import ndimage as _nd
+                sex |= ~_nd.binary_dilation(zone_m, iterations=int(fcfg.boundary_margin_m / (cfg.frame.size_m / chm.shape[0])))
+            shrubs = detect_shrubs(chm, cfg.frame, naip4, naip4_meta, cfg.layout_shift_m, sex, trees, dem, base, scfg)
+            if hcfg.enabled and fp_path.exists():
+                shrubs = homes_mask_filter(shrubs, homes)
+            write_shrubs_csv(shrubs, out / "shrubs.csv")
+            tree_rep["shrubs"] = len(shrubs)
+            log(f"understory: {len(shrubs)} shrubs")
+        (out / "tree_species.json").write_text(json.dumps(
+            {"species": {k: {"name": v[1], "crown_base_share": v[0], "count": tree_rep["species"].get(k, 0)}
+                         for k, v in SPECIES.items()},
+             "note": "trees.csv `species` column; map each to a prefab (young/mature/old by size_class)"}, indent=1))
     write_trees_csv(trees, out / "trees.csv")
     log(f"trees: {len(trees)}")
 
@@ -243,7 +286,7 @@ def build(cfg: CourseConfig) -> dict:
             warnings.append(f"LiDAR sees {miss_m2:.0f} m2 of water not in the layout - trace it as water_hazard")
     report = {"course": cfg.name, "terrain": tinfo.__dict__, "grading": g.report,
               "surfaces": smeta["layers"], "meshes": [o["name"] for o in objs],
-              "trees": {"count": len(trees),
+              "trees": {"count": len(trees), **tree_rep,
                         "conifer": sum(t["type"] == "conifer" for t in trees),
                         "source": trees[0]["source"] if trees else None},
               "homes": homes_rep,

@@ -89,7 +89,7 @@ button[aria-pressed="true"] { background: var(--chip-on); color: var(--chip-on-i
     <button id="vFly">Flyover</button>
     <button id="vAll">Whole course</button>
   </div>
-  <p class="hint hide-min" style="margin:0">Drag to orbit, right-drag to pan, scroll to zoom. Terrain from USGS LiDAR with graded greens, tees and bunkers; trees placed from the LiDAR canopy; homes from open building footprints with LiDAR roof heights.</p>
+  <p class="hint hide-min" style="margin:0">Drag to orbit, right-drag to pan, scroll to zoom. Terrain from USGS LiDAR with graded greens, tees and bunkers; trees by species from the LiDAR and aerial; homes from open building footprints with LiDAR roof heights.</p>
 </section>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
@@ -181,33 +181,46 @@ button[aria-pressed="true"] { background: var(--chip-on); color: var(--chip-on-i
   wg.setAttribute('position', new THREE.BufferAttribute(wp, 3)); wg.setIndex(wi); wg.computeVertexNormals();
   scene.add(new THREE.Mesh(wg, new THREE.MeshPhongMaterial({ color: 0x2f6680, specular: 0x9fc4d6, shininess: 70, transparent: true, opacity: 0.88 })));
 
-  // ---------- trees (LiDAR canopy: live oaks as rounded crowns, cedars as cones)
+  // ---------- trees by species: crown shape, proportions and colour per species
   const nT = T.byteLength / 7;
-  const oakGeo = new THREE.IcosahedronGeometry(1, 1), cedarGeo = new THREE.ConeGeometry(1, 1, 7);
+  const SPEC = C.species || ['live_oak', 'ashe_juniper', 'cedar_elm', 'pecan', 'bald_cypress', 'mesquite', 'hackberry', 'brush', 'juniper_shrub'];
+  // geometry: round / cone / tall oval; crown sx (width x radius), sy (height share), centre (share of height), hsl colour
+  const LOOK = {
+    live_oak:      { g: 'round', sx: 1.05, sy: 0.30, cy: 0.66, hsl: [0.27, 0.38, 0.20] },
+    ashe_juniper:  { g: 'cone',  sx: 0.95, sy: 0.92, cy: 0.50, hsl: [0.36, 0.30, 0.16] },
+    cedar_elm:     { g: 'round', sx: 0.95, sy: 0.42, cy: 0.62, hsl: [0.24, 0.42, 0.27] },
+    pecan:         { g: 'round', sx: 1.00, sy: 0.40, cy: 0.66, hsl: [0.22, 0.44, 0.30] },
+    bald_cypress:  { g: 'cone',  sx: 0.85, sy: 0.85, cy: 0.52, hsl: [0.26, 0.36, 0.26] },
+    mesquite:      { g: 'round', sx: 1.10, sy: 0.26, cy: 0.70, hsl: [0.20, 0.30, 0.34] },
+    hackberry:     { g: 'round', sx: 1.00, sy: 0.40, cy: 0.62, hsl: [0.25, 0.36, 0.26] },
+    brush:         { g: 'round', sx: 1.00, sy: 0.50, cy: 0.50, hsl: [0.22, 0.32, 0.28] },
+    juniper_shrub: { g: 'cone',  sx: 1.00, sy: 0.95, cy: 0.50, hsl: [0.36, 0.30, 0.17] },
+  };
+  const geos = { round: new THREE.IcosahedronGeometry(1, 1), cone: new THREE.ConeGeometry(1, 1, 7) };
   const trunkGeo = new THREE.CylinderGeometry(0.12, 0.18, 1, 5);
   const leafMat = new THREE.MeshLambertMaterial({ color: 0xffffff, flatShading: true });
   const trunkMat = new THREE.MeshLambertMaterial({ color: 0x5a4632 });
-  let nO = 0, nC = 0;
-  for (let t = 0; t < nT; t++) T.getUint8(t * 7 + 6) ? nC++ : nO++;
-  const oaks = new THREE.InstancedMesh(oakGeo, leafMat, nO), cedars = new THREE.InstancedMesh(cedarGeo, leafMat, nC);
-  const trunks = new THREE.InstancedMesh(trunkGeo, trunkMat, nT);
-  const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), sc = new THREE.Vector3(), col = new THREE.Color();
-  let io = 0, ic = 0;
+  const counts = new Array(SPEC.length).fill(0);
+  for (let t = 0; t < nT; t++) counts[T.getUint8(t * 7 + 6)]++;
+  const meshes = SPEC.map((k, i) => {
+    const m = new THREE.InstancedMesh(geos[(LOOK[k] || LOOK.cedar_elm).g], leafMat, Math.max(counts[i], 1));
+    m.count = 0; return m;
+  });
+  let nTrunk = 0; for (let i = 0; i < 7; i++) nTrunk += counts[i];
+  const trunks = new THREE.InstancedMesh(trunkGeo, trunkMat, Math.max(nTrunk, 1)); trunks.count = 0;
+  const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), sc = new THREE.Vector3(), col = new THREE.Color(), up = new THREE.Vector3(0, 1, 0);
   for (let t = 0; t < nT; t++) {
     const o = t * 7, x = T.getInt16(o, true) * 0.2, z = T.getInt16(o + 2, true) * 0.2;
-    const h = T.getUint8(o + 4) / 8, r = Math.max(T.getUint8(o + 5) / 20, 1.2), con = T.getUint8(o + 6);
-    const g = ground(x, z), rnd = Math.sin(t * 12.9898) * 43758.5453 % 1;
-    q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), rnd * 6.28);
-    if (con) {
-      m4.compose(V(x, g + h * 0.55, z), q, sc.set(r * 0.9, h * 0.9, r * 0.9)); cedars.setMatrixAt(ic, m4);
-      cedars.setColorAt(ic++, col.setHSL(0.30 + rnd * 0.03, 0.32, 0.20 + Math.abs(rnd) * 0.05));
-    } else {
-      m4.compose(V(x, g + h * 0.62, z), q, sc.set(r, h * 0.38, r)); oaks.setMatrixAt(io, m4);
-      oaks.setColorAt(io++, col.setHSL(0.24 + rnd * 0.04, 0.38, 0.22 + Math.abs(rnd) * 0.06));
-    }
-    m4.compose(V(x, g + h * 0.3, z), q, sc.set(1, h * 0.6, 1)); trunks.setMatrixAt(t, m4);
+    const h = T.getUint8(o + 4) / 8, r = Math.max(T.getUint8(o + 5) / 20, 0.5), k = T.getUint8(o + 6);
+    const L = LOOK[SPEC[k]] || LOOK.cedar_elm, g = ground(x, z), rnd = Math.abs(Math.sin(t * 12.9898) * 43758.5453) % 1;
+    q.setFromAxisAngle(up, rnd * 6.28);
+    const cr = L.g === 'cone' ? Math.min(r, h * 0.32) * L.sx : r * L.sx;
+    m4.compose(V(x, g + h * L.cy, z), q, sc.set(cr, h * L.sy * (L.g === 'cone' ? 1 : 1), cr));
+    const m = meshes[k]; m.setMatrixAt(m.count, m4);
+    m.setColorAt(m.count++, col.setHSL(L.hsl[0] + (rnd - 0.5) * 0.03, L.hsl[1], L.hsl[2] * (0.88 + rnd * 0.24)));
+    if (k < 7) { m4.compose(V(x, g + h * 0.3, z), q, sc.set(1, h * 0.6, 1)); trunks.setMatrixAt(trunks.count++, m4); }
   }
-  [oaks, cedars, trunks].forEach(m => { m.instanceMatrix.needsUpdate = true; if (m.instanceColor) m.instanceColor.needsUpdate = true; scene.add(m); });
+  [...meshes, trunks].forEach(m => { m.instanceMatrix.needsUpdate = true; if (m.instanceColor) m.instanceColor.needsUpdate = true; scene.add(m); });
 
   // ---------- homes (footprints + LiDAR heights, hipped roofs)
   if (C.bin.hv) {

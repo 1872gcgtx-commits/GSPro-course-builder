@@ -14,7 +14,7 @@ namespace GSProCourseBuilder.Editor
     ///   terrain/terrain.json + heightmap_N.raw  -> Terrain (graded, real-world metres, centred on 0,0,0)
     ///   surfaces/surfaces.json + splat maps     -> terrain layers (rough, trees, first cut, fairway,
     ///                                              fringe, tee, green, bunker, water, cart path)
-    ///   trees.csv                               -> terrain trees (your prefabs, or placeholders)
+    ///   trees.csv (+ shrubs.csv)                -> terrain trees by species (your prefabs, or placeholders)
     ///   water.json                              -> flat water planes at the graded water level
     ///   course_surfaces.obj                     -> conformed Hole##_Green/Tee/Fairway/Bunker meshes
     ///   holes.json                              -> Hole01.. with tees, pin, pin positions, aim points
@@ -28,6 +28,10 @@ namespace GSProCourseBuilder.Editor
         bool useOverlay, importHoles = true, importTrees = true, importWater = true, importMeshes;
         float layerTileSize = 4f;
         GameObject deciduousPrefab, coniferPrefab;
+        static readonly string[] Species = { "live_oak", "ashe_juniper", "cedar_elm", "pecan", "bald_cypress",
+                                             "mesquite", "hackberry", "brush", "juniper_shrub" };
+        GameObject[] speciesPrefabs = new GameObject[Species.Length];
+        bool showSpecies;
         Material waterMaterial;
 
         static readonly Dictionary<string, Color> LayerColors = new Dictionary<string, Color>
@@ -65,6 +69,10 @@ namespace GSProCourseBuilder.Editor
             {
                 deciduousPrefab = (GameObject)EditorGUILayout.ObjectField("  Deciduous prefab", deciduousPrefab, typeof(GameObject), false);
                 coniferPrefab = (GameObject)EditorGUILayout.ObjectField("  Conifer prefab", coniferPrefab, typeof(GameObject), false);
+                showSpecies = EditorGUILayout.Foldout(showSpecies, "  Prefab per species (optional)");
+                if (showSpecies)
+                    for (int i = 0; i < Species.Length; i++)
+                        speciesPrefabs[i] = (GameObject)EditorGUILayout.ObjectField("    " + Species[i], speciesPrefabs[i], typeof(GameObject), false);
             }
             importMeshes = EditorGUILayout.Toggle("Course surface meshes (OBJ)", importMeshes);
             EditorGUILayout.HelpBox("Empty slots get placeholder assets (flat-colour layers, simple trees, " +
@@ -78,6 +86,7 @@ namespace GSProCourseBuilder.Editor
                     dir = outputDir, overlay = useOverlay, holes = importHoles, trees = importTrees,
                     water = importWater, meshes = importMeshes, tile = layerTileSize,
                     deciduous = deciduousPrefab, conifer = coniferPrefab, waterMat = waterMaterial,
+                    species = (GameObject[])speciesPrefabs.Clone(),
                 });
             GUI.enabled = true;
         }
@@ -88,6 +97,7 @@ namespace GSProCourseBuilder.Editor
             public bool overlay, holes = true, trees = true, water = true, meshes;
             public float tile = 4f;
             public GameObject deciduous, conifer;
+            public GameObject[] species;
             public Material waterMat;
         }
 
@@ -130,7 +140,7 @@ namespace GSProCourseBuilder.Editor
                 if (o.trees)
                 {
                     EditorUtility.DisplayProgressBar("GSPro Builder", "Trees", 0.5f);
-                    ImportTrees(Path.Combine(o.dir, "trees.csv"), terrain, assetDir, o.deciduous, o.conifer);
+                    ImportTrees(o.dir, terrain, assetDir, o);
                 }
                 if (o.water)
                 {
@@ -284,42 +294,90 @@ namespace GSProCourseBuilder.Editor
         }
 
         // ---------------------------------------------------------------- trees
-        static void ImportTrees(string csvPath, Terrain terrain, string assetDir, GameObject deciduous, GameObject conifer)
+        // Placeholder shape per species: crown (width, height, centre height) for a 10 m tree, crown shape, colour
+        static readonly Dictionary<string, (Vector3 crown, bool cone, Color leaf)> SpeciesLook = new Dictionary<string, (Vector3, bool, Color)>
         {
+            { "live_oak",      (new Vector3(12f, 6f, 6.0f), false, new Color(0.16f, 0.30f, 0.12f)) },
+            { "ashe_juniper",  (new Vector3(4.5f, 8.5f, 5.2f), true, new Color(0.11f, 0.22f, 0.15f)) },
+            { "cedar_elm",     (new Vector3(7f, 7f, 6.3f), false, new Color(0.26f, 0.40f, 0.16f)) },
+            { "pecan",         (new Vector3(10f, 7.5f, 6.2f), false, new Color(0.30f, 0.44f, 0.18f)) },
+            { "bald_cypress",  (new Vector3(4.5f, 8.5f, 5.6f), true, new Color(0.24f, 0.36f, 0.18f)) },
+            { "mesquite",      (new Vector3(9f, 5f, 6.5f), false, new Color(0.36f, 0.44f, 0.24f)) },
+            { "hackberry",     (new Vector3(8f, 7f, 6.0f), false, new Color(0.28f, 0.40f, 0.18f)) },
+            { "brush",         (new Vector3(9f, 7f, 4.5f), false, new Color(0.30f, 0.40f, 0.20f)) },
+            { "juniper_shrub", (new Vector3(7f, 9f, 5.0f), true, new Color(0.12f, 0.24f, 0.16f)) },
+            { "deciduous",     (new Vector3(6f, 5f, 6.5f), false, new Color(0.2f, 0.45f, 0.15f)) },
+            { "conifer",       (new Vector3(3f, 4.5f, 6.0f), true, new Color(0.1f, 0.3f, 0.15f)) },
+        };
+
+        static void ImportTrees(string dir, Terrain terrain, string assetDir, Options o)
+        {
+            var csvPath = Path.Combine(dir, "trees.csv");
             if (!File.Exists(csvPath)) { Debug.LogWarning("[GSPro Builder] trees.csv not found"); return; }
-            deciduous = deciduous ? deciduous : PlaceholderTree(assetDir, "Deciduous", false);
-            conifer = conifer ? conifer : PlaceholderTree(assetDir, "Conifer", true);
-            var protos = new[] { new TreePrototype { prefab = deciduous }, new TreePrototype { prefab = conifer } };
-            var refSize = new[] { PrefabSize(deciduous), PrefabSize(conifer) };
             var td = terrain.terrainData;
-            td.treePrototypes = protos;
             var size = td.size;
-            var list = new List<TreeInstance>();
             var inv = CultureInfo.InvariantCulture;
-            foreach (var line in File.ReadLines(csvPath).Skip(1))
+            var protoIndex = new Dictionary<string, int>();
+            var protos = new List<TreePrototype>();
+            var refSize = new List<Vector2>();
+            int Proto(string key)
             {
-                var f = line.Split(',');
-                if (f.Length < 6) continue;
-                float x = float.Parse(f[0], inv), z = float.Parse(f[2], inv);
-                float ht = float.Parse(f[3], inv), crown = float.Parse(f[4], inv);
-                int p = f[5].Trim() == "conifer" ? 1 : 0;
-                var nx = (x + size.x / 2f) / size.x;
-                var nz = (z + size.z / 2f) / size.z;
-                if (nx < 0 || nx > 1 || nz < 0 || nz > 1) continue;
-                list.Add(new TreeInstance
-                {
-                    position = new Vector3(nx, 0f, nz),
-                    prototypeIndex = p,
-                    heightScale = ht / Mathf.Max(refSize[p].y, 0.01f),
-                    widthScale = crown * 2f / Mathf.Max(refSize[p].x, 0.01f),
-                    rotation = Random.Range(0f, Mathf.PI * 2f),
-                    color = Color.white,
-                    lightmapColor = Color.white,
-                });
+                if (protoIndex.TryGetValue(key, out var i)) return i;
+                GameObject prefab = null;
+                int si = System.Array.IndexOf(Species, key);
+                if (si >= 0 && o.species != null && si < o.species.Length) prefab = o.species[si];
+                bool conif = key == "ashe_juniper" || key == "bald_cypress" || key == "juniper_shrub" || key == "conifer";
+                if (!prefab) prefab = conif ? o.conifer : o.deciduous;
+                if (!prefab) prefab = PlaceholderTree(assetDir, key);
+                protos.Add(new TreePrototype { prefab = prefab });
+                refSize.Add(PrefabSize(prefab));
+                protoIndex[key] = protos.Count - 1;
+                return protos.Count - 1;
             }
+            var list = new List<TreeInstance>();
+            void Plant(string path, bool shrubs)
+            {
+                if (!File.Exists(path)) return;
+                var lines = File.ReadLines(path).ToList();
+                if (lines.Count < 2) return;
+                var head = lines[0].Split(',').Select(h => h.Trim()).ToList();
+                int C(string name) => head.IndexOf(name);
+                int cx = C("x"), cz = C("z"), ch = C("height_m"), cr = C("crown_radius_m"), ct = C("type"),
+                    cs = C(shrubs ? "kind" : "species"), crot = C("rotation_deg"),
+                    tr = C("tint_r"), tg = C("tint_g"), tb = C("tint_b");
+                foreach (var line in lines.Skip(1))
+                {
+                    var f = line.Split(',');
+                    if (f.Length < head.Count) continue;
+                    float x = float.Parse(f[cx], inv), z = float.Parse(f[cz], inv), ht = float.Parse(f[ch], inv);
+                    float crown = cr >= 0 ? float.Parse(f[cr], inv) : Mathf.Max(0.6f, ht * 0.6f);
+                    var key = cs >= 0 && f[cs].Trim().Length > 0 ? f[cs].Trim() : (ct >= 0 ? f[ct].Trim() : "deciduous");
+                    var nx = (x + size.x / 2f) / size.x;
+                    var nz = (z + size.z / 2f) / size.z;
+                    if (nx < 0 || nx > 1 || nz < 0 || nz > 1) continue;
+                    int p = Proto(key);
+                    var tint = Color.white;
+                    if (tr >= 0 && f[tr].Length > 0)
+                        tint = new Color(float.Parse(f[tr], inv), float.Parse(f[tg], inv), float.Parse(f[tb], inv), 1f);
+                    float rot = crot >= 0 && f[crot].Length > 0 ? float.Parse(f[crot], inv) * Mathf.Deg2Rad : Random.Range(0f, Mathf.PI * 2f);
+                    list.Add(new TreeInstance
+                    {
+                        position = new Vector3(nx, 0f, nz),
+                        prototypeIndex = p,
+                        heightScale = ht / Mathf.Max(refSize[p].y, 0.01f),
+                        widthScale = crown * 2f / Mathf.Max(refSize[p].x, 0.01f),
+                        rotation = rot,
+                        color = tint,
+                        lightmapColor = Color.white,
+                    });
+                }
+            }
+            Plant(csvPath, false);
+            Plant(Path.Combine(dir, "shrubs.csv"), true);
+            td.treePrototypes = protos.ToArray();
             td.SetTreeInstances(list.ToArray(), true);
             terrain.Flush();
-            Debug.Log($"[GSPro Builder] Planted {list.Count} trees");
+            Debug.Log($"[GSPro Builder] Planted {list.Count} trees and shrubs ({protos.Count} species)");
         }
 
         static Vector2 PrefabSize(GameObject prefab)
@@ -331,32 +389,33 @@ namespace GSProCourseBuilder.Editor
             return new Vector2(Mathf.Max(b.size.x, b.size.z), b.size.y);
         }
 
-        /// Single-mesh placeholder tree (terrain trees need the renderer on the prefab root).
-        static GameObject PlaceholderTree(string assetDir, string name, bool cone)
+        /// Single-mesh placeholder tree shaped and coloured for its species
+        /// (terrain trees need the renderer on the prefab root). Swap in real models later.
+        static GameObject PlaceholderTree(string assetDir, string name)
         {
             var prefabPath = $"{assetDir}/Tree_{name}.prefab";
             var existing = AssetDatabase.LoadAssetAtPath<GameObject>(prefabPath);
             if (existing) return existing;
-
+            if (!SpeciesLook.TryGetValue(name, out var look)) look = SpeciesLook["deciduous"];
             var trunk = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
-            var crownGo = GameObject.CreatePrimitive(cone ? PrimitiveType.Capsule : PrimitiveType.Sphere);
+            var crownGo = GameObject.CreatePrimitive(look.cone ? PrimitiveType.Capsule : PrimitiveType.Sphere);
+            float trunkTop = look.crown.z - look.crown.y / 2f + 0.5f;
             var combine = new[]
             {
                 new CombineInstance { mesh = trunk.GetComponent<MeshFilter>().sharedMesh,
-                    transform = Matrix4x4.TRS(new Vector3(0, 2f, 0), Quaternion.identity, new Vector3(0.4f, 2f, 0.4f)) },
+                    transform = Matrix4x4.TRS(new Vector3(0, trunkTop / 2f, 0), Quaternion.identity, new Vector3(0.45f, trunkTop / 2f, 0.45f)) },
                 new CombineInstance { mesh = crownGo.GetComponent<MeshFilter>().sharedMesh,
-                    transform = cone
-                        ? Matrix4x4.TRS(new Vector3(0, 6f, 0), Quaternion.identity, new Vector3(3f, 4.5f, 3f))
-                        : Matrix4x4.TRS(new Vector3(0, 6.5f, 0), Quaternion.identity, new Vector3(6f, 5f, 6f)) },
+                    transform = Matrix4x4.TRS(new Vector3(0, look.crown.z, 0), Quaternion.identity,
+                                              new Vector3(look.crown.x, look.cone ? look.crown.y / 2f : look.crown.y, look.crown.x)) },
             };
             Object.DestroyImmediate(trunk);
             Object.DestroyImmediate(crownGo);
             var mesh = new Mesh { name = $"Tree_{name}" };
             mesh.CombineMeshes(combine, false, true);
             AssetDatabase.CreateAsset(mesh, $"{assetDir}/Tree_{name}_Mesh.asset");
-            var bark = NewLitMaterial(new Color(0.35f, 0.25f, 0.15f), "Bark");
-            var leaves = NewLitMaterial(cone ? new Color(0.1f, 0.3f, 0.15f) : new Color(0.2f, 0.45f, 0.15f), $"Leaves_{name}");
-            AssetDatabase.CreateAsset(bark, $"{assetDir}/Tree_{name}_Bark.mat");
+            var bark = AssetDatabase.LoadAssetAtPath<Material>($"{assetDir}/Tree_Bark.mat");
+            if (!bark) { bark = NewLitMaterial(new Color(0.33f, 0.26f, 0.19f), "Bark"); AssetDatabase.CreateAsset(bark, $"{assetDir}/Tree_Bark.mat"); }
+            var leaves = NewLitMaterial(look.leaf, $"Leaves_{name}");
             AssetDatabase.CreateAsset(leaves, $"{assetDir}/Tree_{name}_Leaves.mat");
             var go = new GameObject($"Tree_{name}");
             go.AddComponent<MeshFilter>().sharedMesh = mesh;

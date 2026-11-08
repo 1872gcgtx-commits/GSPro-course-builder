@@ -81,7 +81,23 @@ tb['x'] = np.round(t['x'] * 10 / 2).astype('<i2')   # 0.2 m units
 tb['z'] = np.round(t['z'] * 10 / 2).astype('<i2')
 tb['h'] = np.clip(np.round(t['height_m'] * 8), 0, 255)
 tb['r'] = np.clip(np.round(t['crown_radius_m'] * 20), 0, 255)
-tb['k'] = (t['type'] == 'conifer').astype('u1')
+SPEC = ['live_oak', 'ashe_juniper', 'cedar_elm', 'pecan', 'bald_cypress', 'mesquite', 'hackberry', 'brush', 'juniper_shrub']
+if 'species' in t.dtype.names:
+    tb['k'] = [SPEC.index(v) if v in SPEC else (1 if ty == 'conifer' else 2) for v, ty in zip(t['species'], t['type'])]
+else:
+    tb['k'] = np.where(t['type'] == 'conifer', 1, 2)
+# understory shrubs (shrubs.csv) appended with their own kinds
+sh_path = Path(O) / 'shrubs.csv'
+if sh_path.exists():
+    sh = np.genfromtxt(sh_path, delimiter=',', names=True, dtype=None, encoding=None)
+    sh = np.atleast_1d(sh)
+    k2 = (sh['x'] > x0) & (sh['x'] < x1) & (sh['z'] > z0) & (sh['z'] < z1)
+    sh = sh[k2]
+    sb = np.zeros(len(sh), dtype=tb.dtype)
+    sb['x'] = np.round(sh['x'] * 5).astype('<i2'); sb['z'] = np.round(sh['z'] * 5).astype('<i2')
+    sb['h'] = np.clip(np.round(sh['height_m'] * 8), 0, 255); sb['r'] = np.clip(np.round(sh['height_m'] * 0.6 * 20), 0, 255)
+    sb['k'] = [SPEC.index(v) for v in sh['kind']]
+    tb = np.concatenate([tb, sb])
 
 # ---- holes
 h = json.load(open(O + 'holes.json'))
@@ -91,7 +107,7 @@ holes = [{'n': x['nine'], 'h': x['nine_hole'], 'par': x['par'], 'yds': x['tees']
           'pin': [x['pin'][c] for c in 'xyz'], 'aims': [[a[c] for c in 'xyz'] for a in x.get('aim_points', [])],
           'elev': x['elevation_change_m']} for x in h['holes']]
 pack = lambda a: base64.b64encode(gzip.compress(a.tobytes(), 9)).decode()
-meta = {'nx': nx, 'nz': nz, 'step': STEP, 'x0': x0, 'z1': z1, 'hmin': hmin, 'holes': holes,
+meta = {'species': SPEC, 'nx': nx, 'nz': nz, 'step': STEP, 'x0': x0, 'z1': z1, 'hmin': hmin, 'holes': holes,
         'routings': json.load(open(O + 'routings/routings.json')) if True else None}
 meta['bin'] = {'h': pack(hq), 'w': pack(wq), 't': pack(tb)}
 
