@@ -86,24 +86,61 @@ def register(polys, building_mask, frame, max_m=4.0, step_m=0.5):
     return (best[0], best[1]), {"overlap_before": round(float(score0), 3), "overlap_after": round(float(best[2]), 3)}
 
 
-def lidar_footprints(building_mask, frame, min_area_m2=40.0):
-    """Footprints traced from the LiDAR's building returns (for houses the footprint
-    dataset misses): boxy outlines become their minimum rotated rectangle, others a
-    simplified outline."""
+def roof_probability(naip4, meta, footprints, step=3, seed=0):
+    """Per-pixel roof probability from the 4-band aerial (about 0.9 m cells).
+
+    A random forest learns roofs from the footprint dataset itself: pixels inside known
+    footprints are roofs, pixels well away from any footprint are not. It then finds
+    roofs the dataset misses (new houses, houses it skipped) and rejects things that
+    only look like roofs to simple rules (shadowed tree crowns, pools, lawn)."""
+    from PIL import Image, ImageDraw
+    from scipy import ndimage
+    from sklearn.ensemble import RandomForestClassifier
+    a = np.asarray(naip4[::step, ::step]).astype(np.float32) / 255
+    res = meta["res"] * step
+    H, W = a.shape[:2]
+    R, G, B, N = a[..., 0], a[..., 1], a[..., 2], a[..., 3]
+    ndvi = (N - R) / np.maximum(N + R, 1e-3); lum = (R + G + B) / 3
+    lm = lambda x, s: ndimage.uniform_filter(x, s)                       # noqa: E731
+    ls = lambda x, s: np.sqrt(np.maximum(lm(x * x, s) - lm(x, s) ** 2, 0))  # noqa: E731
+    F = np.stack([R, G, B, N, ndvi, lum, G - R, B - R, lm(lum, 5), ls(lum, 5), lm(lum, 15), ls(lum, 15),
+                  lm(ndvi, 15), lm(ndvi, 31), ls(ndvi, 9), ndimage.sobel(lum, 0) ** 2 + ndimage.sobel(lum, 1) ** 2],
+                 -1).reshape(H * W, -1)
+    im = Image.new("L", (W, H), 0); dr = ImageDraw.Draw(im)
+    for p in footprints:
+        dr.polygon([((x - meta["x0"]) / res, (meta["z1"] - z) / res) for x, z in p.exterior.coords], fill=1)
+    fp = np.asarray(im, bool)
+    pos = np.flatnonzero(ndimage.binary_erosion(fp, iterations=1))
+    far = ~ndimage.binary_dilation(fp, iterations=int(5 / res))
+    hard = np.flatnonzero((far & (ndimage.uniform_filter(ndvi, 3) < 0.25)).ravel())
+    anyneg = np.flatnonzero(far.ravel())
+    rng = np.random.default_rng(seed)
+    pick = lambda ix, k: rng.choice(ix, min(len(ix), k), replace=False)  # noqa: E731
+    pos, hard, anyneg = pick(pos, 60000), pick(hard, 60000), pick(anyneg, 40000)
+    rf = RandomForestClassifier(60, max_depth=16, min_samples_leaf=5, n_jobs=-1, random_state=seed)
+    rf.fit(F[np.r_[pos, hard, anyneg]], np.r_[np.ones(len(pos)), np.zeros(len(hard) + len(anyneg))])
+    P = np.empty(H * W, np.float32)
+    for s0 in range(0, H * W, 2_000_000):
+        P[s0:s0 + 2_000_000] = rf.predict_proba(F[s0:s0 + 2_000_000])[:, 1]
+    return P.reshape(H, W), {"res": res, "x0": meta["x0"], "z1": meta["z1"]}
+
+
+def mask_footprints(mask, res, x0, z1, min_area_m2=60.0, max_area_m2=2500.0):
+    """House-shaped outlines from a mask on a north-up grid: boxy blobs become their
+    minimum rotated rectangle, others a simplified outline; roads, walls, bluffs and
+    other long or ragged shapes are skipped."""
     import shapely
     from shapely.geometry import Polygon
     from scipy import ndimage
     from skimage.measure import find_contours
-    n = building_mask.shape[0]; res = frame.size_m / n; h = frame.size_m / 2
-    m = ndimage.binary_opening(ndimage.binary_closing(building_mask, iterations=2), iterations=1)
-    lab, k = ndimage.label(m)
+    lab, k = ndimage.label(mask)
     out = []
     for i, sl in enumerate(ndimage.find_objects(lab), start=1):
         blob = lab[sl] == i
-        if blob.sum() * res * res < min_area_m2:
+        if not (min_area_m2 <= blob.sum() * res * res <= max_area_m2):
             continue
         c = max(find_contours(np.pad(blob.astype(float), 1), 0.5), key=len)
-        pts = [((sl[1].start + cc - 1 + 0.5) * res - h, h - (sl[0].start + rr - 1 + 0.5) * res) for rr, cc in c]
+        pts = [(x0 + (sl[1].start + cc - 1 + 0.5) * res, z1 - (sl[0].start + rr - 1 + 0.5) * res) for rr, cc in c]
         p = Polygon(pts).buffer(0)
         if p.is_empty or p.geom_type != "Polygon":
             continue
@@ -111,8 +148,9 @@ def lidar_footprints(building_mask, frame, min_area_m2=40.0):
         rx, rz = np.array(rect.exterior.coords).T
         sides = sorted(np.hypot(np.diff(rx), np.diff(rz))[:2])
         fill = p.area / max(rect.area, 1e-6)
-        if fill < 0.55 or sides[0] < 4.0 or sides[1] / max(sides[0], 1e-6) > 5.0:
-            continue                       # bluffs, walls, bridges: not house-shaped
+        aspect = sides[1] / max(sides[0], 1e-6)
+        if fill < 0.6 or sides[0] < 5.0 or aspect > 7.0 or (aspect > 4.0 and sides[0] < 8.0):
+            continue                       # roads, drives, walls: long and narrow (townhouse rows are wide)
         p = rect if fill > 0.8 else p.simplify(0.8, preserve_topology=True)
         out.append(shapely.geometry.polygon.orient(p, 1.0))
     return out
@@ -136,7 +174,8 @@ def _roof_class(rgb):
 
 
 def build_homes(footprints: dict, frame, dem, base_elev, layout, cfg: HomesConfig,
-                chm=None, building_mask=None, naip=None, naip_shift=(0.0, 0.0), boundary=None, log=print):
+                chm=None, building_mask=None, naip=None, naip_shift=(0.0, 0.0), boundary=None, log=print,
+                naip4=None, naip4_meta=None):
     import shapely
     from shapely.geometry import Polygon
     from scipy.spatial import Delaunay
@@ -170,15 +209,22 @@ def build_homes(footprints: dict, frame, dem, base_elev, layout, cfg: HomesConfi
         keep = k2
     polys = [polys[i] for i in keep]; src_h = [src_h[i] for i in keep]
 
+    # roofs in the aerial that the footprint dataset misses (needs the 4-band aerial)
+    found = []
+    if naip4 is not None:
+        P_roof, g = roof_probability(naip4, naip4_meta, polys)
+        from scipy import ndimage
+        cand = ndimage.binary_opening(ndimage.gaussian_filter(P_roof, 1) > 0.6, iterations=2)
+        found = [shapely.affinity.translate(p, naip_shift[0], naip_shift[1])   # photo -> LiDAR frame
+                 for p in mask_footprints(cand, g["res"], g["x0"], g["z1"])]
     shift, reg = register(polys, building_mask, frame)
     if any(shift):
         polys = [shapely.affinity.translate(p, shift[0], shift[1]) for p in polys]
     n_ms = len(polys)
-    # houses the footprint dataset misses but the LiDAR saw: trace them from the LiDAR
-    if building_mask is not None:
+    if found:
         have = shapely.union_all([p.buffer(2.0) for p in polys]) if polys else None
         zone = Polygon(boundary).buffer(cfg.margin_m) if boundary else None
-        for p in lidar_footprints(building_mask, frame):
+        for p in found:
             if have is not None and p.intersects(have):
                 continue
             if zone is not None and not zone.contains(p.centroid):
@@ -186,11 +232,15 @@ def build_homes(footprints: dict, frame, dem, base_elev, layout, cfg: HomesConfi
             if surf is not None and p.intersection(surf).area > 0.1 * p.area:
                 continue
             polys.append(p); src_h.append(-1.0)
-    log(f"homes: {n_ms} footprints + {len(polys) - n_ms} traced from the LiDAR (dropped {dropped_course} on course surfaces), "
+    log(f"homes: {n_ms} footprints + {len(polys) - n_ms} found in the aerial (dropped {dropped_course} on course surfaces), "
         f"registered {shift[0]:+.1f} m E {shift[1]:+.1f} m N onto the LiDAR")
 
     n = chm.shape[0] if chm is not None else None
     res = frame.size_m / n if n else None
+    if chm is not None:
+        from scipy import ndimage
+        raised = ndimage.maximum_filter(chm, size=3) >= 2.5            # fills empty cells on roofs
+        building_mask = raised if building_mask is None else (raised | building_mask)
     homes = []
     for idx, (P, mh) in enumerate(zip(polys, src_h)):
         # ---- height
@@ -202,12 +252,13 @@ def build_homes(footprints: dict, frame, dem, base_elev, layout, cfg: HomesConfi
             if m.any():
                 bm = building_mask[m] if building_mask is not None else np.zeros(m.sum(), bool)
                 lidar_cov = float(bm.mean())
-                if lidar_cov >= 0.4:
-                    top = float(np.percentile(chm[m][bm], 95))
+                if lidar_cov >= 0.5:                       # the house stood when the LiDAR was flown
+                    vals = chm[m][bm]
+                    top = float(np.percentile(vals[vals > 0], 90)) if (vals > 0).any() else None
         src = "lidar" if top is not None else ("footprint" if mh > 2.5 else "default")
         if top is None:
             top = mh if mh > 2.5 else cfg.default_height_m
-        top = float(np.clip(top, 3.2, 16.0))
+        top = float(np.clip(top, 3.2, 10.0 if P.area < 900 else 16.0))   # tree crowns over a roof can read high
         # ---- ground
         xs, zs = np.array(P.exterior.coords).T
         g = dem.sample(np.append(xs, P.centroid.x), np.append(zs, P.centroid.y)) - base_elev
@@ -271,7 +322,7 @@ def build_homes(footprints: dict, frame, dem, base_elev, layout, cfg: HomesConfi
                       "_roof": (np.c_[pts[:, 0], zr, pts[:, 1]], tri), "_wall_ring": np.array(P.exterior.coords)[:-1],
                       "_ground": ground, "_wall_top": wall_top})
     return homes, {"count": len(homes), "registration_shift_m": list(shift), "registration": reg,
-                   "dropped_on_course": dropped_course, "from_footprints": n_ms, "from_lidar": len(polys) - n_ms,
+                   "dropped_on_course": dropped_course, "from_footprints": n_ms, "from_aerial": len(polys) - n_ms,
                    "height_sources": {k: sum(h_["height_source"] == k for h_ in homes) for k in ("lidar", "footprint", "default")}}
 
 

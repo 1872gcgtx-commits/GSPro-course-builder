@@ -94,8 +94,12 @@ trees, using your prefabs or placeholders.
 
 ### Homes around the course
 Footprints come from **Microsoft Global ML Building Footprints** (open data, ODbL;
-`fetch --only buildings`), which include houses built after the LiDAR was flown. Houses
-the LiDAR saw but the footprint data misses are traced from the LiDAR's building returns.
+`fetch --only buildings`), which include many houses built after the LiDAR was flown.
+The footprint data still misses whole streets. To fill those gaps, a random forest is
+trained on the 4-band aerial, using the known footprints as roof examples. Roofs it
+finds that no footprint covers are added if they are house-shaped: at least 60 m², boxy,
+and not long and narrow, which rules out roads, drives and walls. This also rejects
+things simple rules mistake for roofs, such as pools and shadowed tree crowns.
 Footprints are shifted onto the LiDAR first (best overlap with its building returns).
 Each house gets:
 

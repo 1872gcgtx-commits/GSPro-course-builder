@@ -175,7 +175,9 @@ def build(cfg: CourseConfig) -> dict:
         ring = [cfg.frame.to_local(lon, lat) for lon, lat in cfg.boundary] if cfg.boundary else None
         homes, homes_rep = build_homes(json.loads(fp_path.read_text()), cfg.frame, dem, base, layout, hcfg, chm,
                                        masks["building"] if masks is not None else None, naip,
-                                       cfg.layout_shift_m, ring, log=log)
+                                       cfg.layout_shift_m, ring, log=log,
+                                       naip4=np.load(data / "naip4.npy", mmap_mode="r") if (data / "naip4.npy").exists() else None,
+                                       naip4_meta=json.loads((data / "naip4.json").read_text()) if (data / "naip4.json").exists() else None)
         homes_rep.update(write_homes(homes, out / "homes", hcfg))
         before = len(trees)
         trees = homes_mask_filter(trees, homes)
