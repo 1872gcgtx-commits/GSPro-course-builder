@@ -92,6 +92,48 @@ Without LiDAR canopy, trees are scattered at natural spacing inside the layout's
 `trees` areas. The output is `trees.csv`. The Unity importer plants them as terrain
 trees, using your prefabs or placeholders.
 
+### Tree species and understory
+The LiDAR tree list is brought up to the date of the aerial photo before species are
+assigned. A canopy classifier is trained on the 4-band aerial, using the LiDAR crowns as
+examples. With it, trees whose crown is gone from the aerial are dropped (most are lots
+cleared for new streets). Canopy the LiDAR never saw becomes new trees, with height
+estimated from crown size.
+
+Each tree then gets a species from three kinds of evidence. Crown shape and colour are
+compared with the course's own trees, not fixed thresholds:
+
+- **Crown shape (LiDAR):** height, how wide versus tall, how peaked or flat-topped, how
+  see-through.
+- **Colour (aerial):** brightness, green and blue tint, NDVI.
+- **Setting:** distance to water, height above it, surrounding canopy cover.
+
+| Species | Where / what |
+|---|---|
+| bald_cypress | creek bank, ≥ 9 m, narrow and peaked |
+| pecan | creek bottom, ≥ 12 m |
+| mesquite | open ground, < 7.5 m, light and airy |
+| ashe_juniper ("cedar") | narrow or peaked, dark blue-green; never in the creek bottom |
+| live_oak | broad, flat-topped, dark and dense |
+| cedar_elm | upright, mid green; favoured in the creek bottom |
+| hackberry | irregular, see-through, mid green |
+
+`trees.csv` keeps its original 7 columns and adds these: `species`, `species_conf`,
+`crown_base_m` (where the branches start), `size_class` (young / mature / old within the
+species), `tint_r/g/b` (the crown's colour in the aerial relative to its species) and
+`rotation_deg`.
+
+`shrubs.csv` holds the understory: vegetation 0.6–3 m tall, as `brush` or
+`juniper_shrub`. `tree_species.json` lists the species and their counts.
+
+These are rules, not field surveys. Expect the overall mix and the creek, upland and
+open-ground pattern to be right, and individual trees to be sometimes wrong.
+
+**Unity 6:** the importer has one prefab slot per species. Empty slots fall back to your
+deciduous/conifer prefab, then to a placeholder shaped and coloured for that species.
+Each tree's tint becomes its instance colour, which drives the colour variation in
+SpeedTree and terrain-tree shaders. Rotation comes from the CSV. Shrubs are planted as
+small trees.
+
 ### Homes around the course
 Footprints come from **Microsoft Global ML Building Footprints** (open data, ODbL;
 `fetch --only buildings`), which include many houses built after the LiDAR was flown.

@@ -219,7 +219,7 @@ def build_homes(footprints: dict, frame, dem, base_elev, layout, cfg: HomesConfi
                  for p in mask_footprints(cand, g["res"], g["x0"], g["z1"])]
     # remove spikes and slivers (thin wall-like tails on some footprints)
     def _clean(p):
-        q = p.buffer(-0.6, join_style="mitre").buffer(0.6, join_style="mitre")
+        q = p.buffer(-1.5, join_style="mitre").buffer(1.5, join_style="mitre")   # parts < 3 m wide
         if q.is_empty:
             return None
         if q.geom_type != "Polygon":

@@ -203,7 +203,9 @@ button[aria-pressed="true"] { background: var(--chip-on); color: var(--chip-on-i
   const counts = new Array(SPEC.length).fill(0);
   for (let t = 0; t < nT; t++) counts[T.getUint8(t * 7 + 6)]++;
   const meshes = SPEC.map((k, i) => {
-    const m = new THREE.InstancedMesh(geos[(LOOK[k] || LOOK.cedar_elm).g], leafMat, Math.max(counts[i], 1));
+    const cap = Math.max(counts[i], 1);
+    const m = new THREE.InstancedMesh(geos[(LOOK[k] || LOOK.cedar_elm).g], leafMat, cap);
+    m.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(cap * 3), 3);   // sized before count is reset
     m.count = 0; return m;
   });
   let nTrunk = 0; for (let i = 0; i < 7; i++) nTrunk += counts[i];
