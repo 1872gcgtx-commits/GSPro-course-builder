@@ -332,9 +332,20 @@ def path_meshes(cart_lines, streets, dem, base_elev, water=None):
     cart_pts = [(_resample(ln, 1.0)[0], CART_WIDTH) for ln in cart_lines]
     for i, st in enumerate(streets):
         # bigger roads sit a hair higher so they win where streets overlap at junctions
-        r = ribbon(st["line"], st["width"], 0.04 + 0.003 * rank.get(st["kind"], 0), st["surface"], step=2.0, u_scale=8.0)
+        r = ribbon(st["line"], st["width"], 0.04 + 0.003 * rank.get(st["kind"], 0), st["surface"], step=2.0, u_scale=8.0,
+                   bridge=True)
         if r is None:
             continue
+        pts, y, nrm, s = r
+        wm = wet(pts)
+        if wm.any():                                   # road bridge: concrete parapets
+            idx = np.nonzero(wm)[0]
+            i0, i1 = max(idx.min() - 2, 0), min(idx.max() + 3, len(pts))
+            for side in (1, -1):
+                q = pts[i0:i1] + nrm[i0:i1] * side * (st["width"] / 2 + 0.3)
+                lo = y[i0:i1]; hi = lo + 1.0
+                mk.strip([np.array([p[0], a, p[1]]) for p, a in zip(q, lo)], [np.array([p[0], a, p[1]]) for p, a in zip(q, hi)],
+                         [(si / 2, 0) for si in s[i0:i1]], [(si / 2, 0.5) for si in s[i0:i1]], "Road_Curb")
         if st["curb"]:
             pts = _resample(st["line"], 1.0)[0]
             others = [(p, w) for p, w, j in allp if j != i] + cart_pts   # curb cuts at cart path crossings
@@ -354,9 +365,10 @@ def path_meshes(cart_lines, streets, dem, base_elev, water=None):
                 runs.append(cur)
             for run in runs:
                 for side in (1, -1):
-                    ribbon(np.array(run), 0.45, 0.12, "Road_Curb", step=1.0, u_scale=2.0, offset=side * (st["width"] / 2 + 0.22))
+                    ribbon(np.array(run), 0.45, 0.12, "Road_Curb", step=1.0, u_scale=2.0, offset=side * (st["width"] / 2 + 0.22),
+                           bridge=True)
         if st["centre_line"]:
-            ribbon(st["line"], 0.12, 0.05, "Road_Line", step=2.0, u_scale=6.0)
+            ribbon(st["line"], 0.12, 0.05 + 0.003 * rank.get(st["kind"], 0), "Road_Line", step=2.0, u_scale=6.0, bridge=True)
     return np.array(mk.V, float), np.array(mk.UV, float), np.array(mk.T, int), mk.M
 
 
