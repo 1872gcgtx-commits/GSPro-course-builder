@@ -134,10 +134,11 @@ def build_holes(layout: Layout, dem: DEM, base_elev: float, tee_sets: list[str])
     return out
 
 
-def write_holes(holes: list[dict], course_name: str, out_dir: Path) -> None:
+def write_holes(holes: list[dict], course_name: str, out_dir: Path, tee_sets: list[dict] | None = None) -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
     doc = {
         "course": course_name,
+        "tee_sets": tee_sets or [],                    # [{name, color}] in card order, from the review page
         "frame": "Unity metres: x east, y up from terrain base, z north; origin = terrain centre",
         "par_total": sum(h["par"] for h in holes),
         "holes": holes,

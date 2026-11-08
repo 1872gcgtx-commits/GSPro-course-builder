@@ -1,7 +1,7 @@
 [course]
 name = "Mill Creek Golf Club (Salado, TX)"
 slug = "mill-creek-salado"
-tee_sets = ["Blue", "White", "Red"]   # Mill Creek card
+tee_sets = ["Blue", "White", "Red", "Green"]   # order + colours: tee_settings/tees.json (review page)
 
 # Property outline (traced by the course owner); trees and QA are limited to it
 boundary = [[-97.523671, 30.962331], [-97.50312, 30.961898], [-97.500702, 30.959508],

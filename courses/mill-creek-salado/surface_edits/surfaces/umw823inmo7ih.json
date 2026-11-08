@@ -1,0 +1,30 @@
+{
+  "conf": 1,
+  "deleted": true,
+  "edited": true,
+  "hole": 1,
+  "id": "umw823inmo7ih",
+  "kind": "tee",
+  "method": "manual",
+  "nine": 1,
+  "ring": [
+    [
+      -106.26,
+      153.26
+    ],
+    [
+      -113.18,
+      161.81
+    ],
+    [
+      -118.62,
+      157.4
+    ],
+    [
+      -111.7,
+      148.85
+    ]
+  ],
+  "tee_set": "Blue",
+  "updated": "2026-11-08T16:38:19.498Z"
+}

@@ -1,0 +1,30 @@
+{
+  "conf": 1,
+  "deleted": true,
+  "edited": true,
+  "hole": 1,
+  "id": "umw8234burdy4",
+  "kind": "tee",
+  "method": "manual",
+  "nine": 1,
+  "ring": [
+    [
+      -105.51,
+      148.95
+    ],
+    [
+      -112.43,
+      157.5
+    ],
+    [
+      -117.87,
+      153.09
+    ],
+    [
+      -110.95,
+      144.54
+    ]
+  ],
+  "tee_set": "Blue",
+  "updated": "2026-11-08T16:38:14.917Z"
+}

@@ -312,8 +312,13 @@ def build(cfg: CourseConfig) -> dict:
         overlay = "overlay.jpg"
     write_svg(layout, cfg.frame, out / f"{cfg.slug}_opcd.svg", overlay, cfg.svg_colors)
 
-    holes = build_holes(layout, dem, base, cfg.tee_sets)
-    write_holes(holes, cfg.name, out)
+    tee_info = None
+    ts_file = cfg.root / "tee_settings" / "tees.json"
+    if ts_file.exists():                               # owner's tee sets (names, order, colours)
+        ts_doc = json.loads(ts_file.read_text()); ts_doc = ts_doc.get("data", ts_doc)
+        tee_info = [{"name": t["name"], "color": t.get("color")} for t in ts_doc.get("sets", [])]
+    holes = build_holes(layout, dem, base, [t["name"] for t in tee_info] if tee_info else cfg.tee_sets)
+    write_holes(holes, cfg.name, out, tee_info)
     routing_summary = None
     nines = sorted({h["nine"] for h in holes if h.get("nine")})
     if nines:
