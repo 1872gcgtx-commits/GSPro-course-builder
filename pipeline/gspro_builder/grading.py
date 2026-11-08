@@ -171,7 +171,16 @@ def grade(dem: DEM, layout: Layout, cfg: GradingConfig) -> GradingResult:
         length = float(m.sum()) * res * res / (2 * half_w)
         tag = str(s.props.get("water", "") or s.props.get("waterway", "")).lower()
         flowing = tag in ("river", "stream", "canal", "riverbank") or length / (2 * half_w) > cfg.stream_elongation
-        if flowing:
+        prof = s.props.get("profile")
+        if prof:
+            # explicit water-surface profile (NHD thalweg): nearest station's level, smoothed
+            from scipy.spatial import cKDTree
+            P = np.asarray(prof, float)
+            xw, zw = cell_centers(frame, n, *win)
+            _, j = cKDTree(P[:, :2]).query(np.column_stack([xw.ravel(), zw.ravel()]))
+            level_f = ndimage.gaussian_filter(P[j, 2].reshape(xw.shape), 4 / res)
+            flowing = True
+        elif flowing:
             # level follows the low bank nearby, smoothed along the channel
             idx = ndimage.distance_transform_edt(~shore, return_distances=False, return_indices=True)
             near = y[tuple(idx)]

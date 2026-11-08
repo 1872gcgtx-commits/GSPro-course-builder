@@ -105,10 +105,11 @@ def reviewed_shapes(draft: dict, edits: list[dict]) -> list[dict]:
     (an edit replaces the draft shape with the same id; `deleted` removes it)."""
     shapes = {s["id"]: s for s in draft.get("shapes", [])}
     # shapes the owner edited from an earlier draft win over the new draft for that hole + type
+    edited_ids = {e.get("id") for e in edits}
     own = {(e.get("nine"), e.get("hole"), e.get("kind")) for e in edits
-           if not e.get("deleted") and e.get("id") and not str(e["id"]).startswith(("v2-", "u"))}
+           if not e.get("deleted") and e.get("id") and e["id"] not in shapes and not str(e["id"]).startswith("u")}
     shapes = {k: v for k, v in shapes.items()
-              if not (str(k).startswith("v2-") and (v.get("nine"), v.get("hole"), v.get("kind")) in own)}
+              if k in edited_ids or (v.get("nine"), v.get("hole"), v.get("kind")) not in own}
     for e in edits:
         sid = e.get("id")
         if not sid:
@@ -132,6 +133,9 @@ def surfaces_to_geojson(shapes: list[dict], frame: CourseFrame) -> dict:
                  "method": s.get("method"), "edited": bool(s.get("edited")), "review_id": s["id"]}
         if s.get("tee_set"):
             props["tee_set"] = s["tee_set"]
+        if s.get("profile"):                       # NHD creek: water surface along the thalweg
+            props["profile"] = s["profile"]
+            props["water"] = "stream"
         feats.append({"type": "Feature", "geometry": {"type": "Polygon", "coordinates": [ring]}, "properties": props})
     return {"type": "FeatureCollection", "features": feats}
 
