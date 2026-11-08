@@ -1,0 +1,328 @@
+<title>Mill Creek 3D Preview</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Barlow:wght@400;500;600&display=swap">
+<style>
+/* Layout: full-bleed 3D scene; a scorecard-style panel floats over it (bottom sheet on phones) */
+:root {
+  --sky: #b9cfdc;
+  --panel: rgba(18, 31, 24, 0.86);
+  --panel-line: rgba(214, 232, 200, 0.16);
+  --ink: #eef3e8;
+  --ink-dim: #a9b8a3;
+  --flag: #e8c547;
+  --chip: rgba(238, 243, 232, 0.08);
+  --chip-on: #e8c547;
+  --chip-on-ink: #1a2a1f;
+  --display: "Barlow Condensed", "Arial Narrow", system-ui, sans-serif;
+  --body: "Barlow", system-ui, -apple-system, "Segoe UI", sans-serif;
+  color-scheme: dark;
+}
+html, body { height: 100%; }
+[hidden] { display: none !important; }
+body { background: var(--sky); color: var(--ink); font-family: var(--body); overflow: hidden; }
+#scene { position: fixed; inset: 0; display: block; width: 100%; height: 100%; touch-action: none; }
+.panel {
+  position: fixed; z-index: 2;
+  top: calc(12px + env(safe-area-inset-top, 0px)); left: calc(12px + env(safe-area-inset-left, 0px));
+  width: 340px; max-width: calc(100% - 24px);
+  background: var(--panel); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+  border: 1px solid var(--panel-line); border-radius: 10px;
+  padding: 14px 16px 16px; display: flex; flex-direction: column; gap: 12px;
+}
+.brand { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+h1 { margin: 0; font: 700 26px/1 var(--display); letter-spacing: 0.01em; text-wrap: balance; }
+.loc { font-size: 12px; color: var(--ink-dim); letter-spacing: 0.04em; text-transform: uppercase; white-space: nowrap; }
+.label { font: 600 11px/1 var(--body); letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink-dim); }
+.row { display: flex; flex-wrap: wrap; gap: 6px; }
+button {
+  font: 600 14px/1 var(--body); color: var(--ink); background: var(--chip);
+  border: 1px solid var(--panel-line); border-radius: 6px; padding: 8px 10px; cursor: pointer;
+}
+button:hover { border-color: rgba(232, 197, 71, 0.6); }
+button:focus-visible { outline: 2px solid var(--flag); outline-offset: 2px; }
+button[aria-pressed="true"] { background: var(--chip-on); color: var(--chip-on-ink); border-color: var(--chip-on); }
+.holes { display: grid; grid-template-columns: repeat(9, 1fr); gap: 4px; }
+.holes button { padding: 7px 0; font: 600 15px/1 var(--display); font-variant-numeric: tabular-nums; }
+.card { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; border-top: 1px solid var(--panel-line); padding-top: 12px; }
+.card .t { grid-column: 1 / -1; font: 700 22px/1.1 var(--display); margin-bottom: 6px; }
+.card .t small { font: 500 14px var(--body); color: var(--ink-dim); margin-left: 6px; }
+.stat b { display: block; font: 700 22px/1 var(--display); font-variant-numeric: tabular-nums; }
+.stat span { font-size: 11px; color: var(--ink-dim); letter-spacing: 0.08em; text-transform: uppercase; }
+.views { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+.hint { font-size: 12px; color: var(--ink-dim); line-height: 1.4; }
+#status {
+  position: fixed; z-index: 3; inset: 0; display: grid; place-items: center;
+  font: 600 18px var(--display); letter-spacing: 0.06em; text-transform: uppercase; color: #1a2a1f; background: var(--sky);
+}
+.collapse { display: none; }
+@media (max-width: 640px) {
+  .panel { top: auto; bottom: calc(10px + env(safe-area-inset-bottom, 0px)); left: max(10px, env(safe-area-inset-left, 0px)); right: max(10px, env(safe-area-inset-right, 0px)); width: auto; max-width: none; padding: 12px; gap: 10px; }
+  h1 { font-size: 22px; }
+  .collapse { display: inline-block; padding: 6px 8px; }
+  .panel.min .hide-min { display: none; }
+  .hint { display: none; }
+}
+@media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto; } }
+</style>
+
+<canvas id="scene" aria-label="3D view of Mill Creek Golf Club"></canvas>
+<div id="status">Loading course…</div>
+
+<section class="panel" id="panel">
+  <div class="brand">
+    <h1>Mill Creek Golf Club</h1>
+    <span class="loc">Salado, TX</span>
+    <button class="collapse" id="collapse" aria-expanded="true">Hide</button>
+  </div>
+  <div class="hide-min" style="display:flex;flex-direction:column;gap:8px">
+    <span class="label">Routing</span>
+    <div class="row" id="routings"></div>
+  </div>
+  <div class="hide-min" style="display:flex;flex-direction:column;gap:8px">
+    <span class="label" id="holesLabel">Holes</span>
+    <div class="holes" id="holes"></div>
+  </div>
+  <div class="card" id="card"></div>
+  <div class="views">
+    <button id="vTee">Tee box</button>
+    <button id="vFly">Flyover</button>
+    <button id="vAll">Whole course</button>
+  </div>
+  <p class="hint hide-min" style="margin:0">Drag to orbit, right-drag to pan, scroll to zoom. Terrain from USGS LiDAR with graded greens, tees and bunkers; trees placed from the LiDAR canopy.</p>
+</section>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+<script>
+(async function () {
+  const status = document.getElementById('status');
+  const fail = (m) => { status.textContent = m; status.hidden = false; };
+  let C;
+  try { C = await (await fetch('data.json')).json(); } catch (e) { return fail('Could not load the course data'); }
+
+  async function unpack(b64, Type) {
+    const bytes = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
+    const ds = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'));
+    const buf = await new Response(ds).arrayBuffer();
+    return Type ? new Type(buf) : buf;
+  }
+  const H = await unpack(C.bin.h, Uint16Array);
+  const W = await unpack(C.bin.w, Uint16Array);
+  const T = new DataView(await unpack(C.bin.t));
+  const nx = C.nx, nz = C.nz, step = C.step, x0 = C.x0, z1 = C.z1, hmin = C.hmin;
+  const EXAG = 1.0;
+  const hAt = (i, j) => (H[i * nx + j] / 100 + hmin) * EXAG;
+  function ground(x, z) {           // course coords (x east, z north) -> height
+    const fj = (x - x0) / step, fi = (z1 - z) / step;
+    const j = Math.max(0, Math.min(nx - 2, Math.floor(fj))), i = Math.max(0, Math.min(nz - 2, Math.floor(fi)));
+    const tx = fj - j, tz = fi - i;
+    return (hAt(i, j) * (1 - tx) + hAt(i, j + 1) * tx) * (1 - tz) + (hAt(i + 1, j) * (1 - tx) + hAt(i + 1, j + 1) * tx) * tz;
+  }
+  const V = (x, y, z) => new THREE.Vector3(x, y, -z);   // course -> three (z north = -Z)
+
+  // ---------- renderer / scene
+  const canvas = document.getElementById('scene');
+  const small = Math.min(innerWidth, innerHeight) < 700;
+  const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+  renderer.setPixelRatio(Math.min(devicePixelRatio, small ? 1.5 : 2));
+  renderer.setSize(innerWidth, innerHeight);
+  renderer.outputEncoding = THREE.sRGBEncoding;
+  const scene = new THREE.Scene();
+  const sky = new THREE.Color('#b9cfdc');
+  scene.background = sky;
+  scene.fog = new THREE.Fog(sky, 900, 4200);
+  const camera = new THREE.PerspectiveCamera(50, innerWidth / innerHeight, 0.5, 9000);
+  const controls = new THREE.OrbitControls(camera, canvas);
+  controls.enableDamping = true; controls.dampingFactor = 0.08;
+  controls.maxPolarAngle = Math.PI * 0.495;
+  scene.add(new THREE.HemisphereLight(0xdfeefa, 0x4a5a32, 0.75));
+  const sun = new THREE.DirectionalLight(0xfff1d6, 0.95);
+  sun.position.set(-600, 900, -400); scene.add(sun);
+
+  // ---------- terrain
+  const s = small ? 2 : 1;
+  const cx = Math.floor((nx - 1) / s) + 1, cz = Math.floor((nz - 1) / s) + 1;
+  const pos = new Float32Array(cx * cz * 3), uv = new Float32Array(cx * cz * 2);
+  for (let a = 0; a < cz; a++) for (let b = 0; b < cx; b++) {
+    const i = a * s, j = b * s, k = a * cx + b;
+    pos[k * 3] = x0 + j * step; pos[k * 3 + 1] = hAt(i, j); pos[k * 3 + 2] = -(z1 - i * step);
+    uv[k * 2] = j / (nx - 1); uv[k * 2 + 1] = 1 - i / (nz - 1);
+  }
+  const idx = new Uint32Array((cx - 1) * (cz - 1) * 6); let n = 0;
+  for (let a = 0; a < cz - 1; a++) for (let b = 0; b < cx - 1; b++) {
+    const p = a * cx + b; idx[n++] = p; idx[n++] = p + cx; idx[n++] = p + 1; idx[n++] = p + 1; idx[n++] = p + cx; idx[n++] = p + cx + 1;
+  }
+  const tg = new THREE.BufferGeometry();
+  tg.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  tg.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+  tg.setIndex(new THREE.BufferAttribute(idx, 1));
+  tg.computeVertexNormals();
+  const tex = await new Promise((res, rej) => new THREE.TextureLoader().load('tex.jpg', res, undefined, rej)).catch(() => null);
+  if (!tex) return fail('Could not load the surface texture');
+  tex.encoding = THREE.sRGBEncoding; tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
+  scene.add(new THREE.Mesh(tg, new THREE.MeshLambertMaterial({ map: tex })));
+
+  // ---------- water (level grid from the build's water bodies)
+  const ws = 2, wx = Math.floor((nx - 1) / ws) + 1, wz = Math.floor((nz - 1) / ws) + 1;
+  const wp = new Float32Array(wx * wz * 3), wet = new Uint8Array(wx * wz);
+  for (let a = 0; a < wz; a++) for (let b = 0; b < wx; b++) {
+    const i = a * ws, j = b * ws, k = a * wx + b, w = W[i * nx + j];
+    wet[k] = w > 0;
+    wp[k * 3] = x0 + j * step; wp[k * 3 + 2] = -(z1 - i * step);
+    wp[k * 3 + 1] = w > 0 ? ((w - 1) / 100 + hmin) * EXAG + 0.05 : hAt(i, j) - 3;
+  }
+  const wi = [];
+  for (let a = 0; a < wz - 1; a++) for (let b = 0; b < wx - 1; b++) {
+    const p = a * wx + b;
+    if (wet[p] || wet[p + 1] || wet[p + wx] || wet[p + wx + 1]) wi.push(p, p + wx, p + 1, p + 1, p + wx, p + wx + 1);
+  }
+  const wg = new THREE.BufferGeometry();
+  wg.setAttribute('position', new THREE.BufferAttribute(wp, 3)); wg.setIndex(wi); wg.computeVertexNormals();
+  scene.add(new THREE.Mesh(wg, new THREE.MeshPhongMaterial({ color: 0x2f6680, specular: 0x9fc4d6, shininess: 70, transparent: true, opacity: 0.88 })));
+
+  // ---------- trees (LiDAR canopy: live oaks as rounded crowns, cedars as cones)
+  const nT = T.byteLength / 7;
+  const oakGeo = new THREE.IcosahedronGeometry(1, 1), cedarGeo = new THREE.ConeGeometry(1, 1, 7);
+  const trunkGeo = new THREE.CylinderGeometry(0.12, 0.18, 1, 5);
+  const leafMat = new THREE.MeshLambertMaterial({ color: 0xffffff, flatShading: true });
+  const trunkMat = new THREE.MeshLambertMaterial({ color: 0x5a4632 });
+  let nO = 0, nC = 0;
+  for (let t = 0; t < nT; t++) T.getUint8(t * 7 + 6) ? nC++ : nO++;
+  const oaks = new THREE.InstancedMesh(oakGeo, leafMat, nO), cedars = new THREE.InstancedMesh(cedarGeo, leafMat, nC);
+  const trunks = new THREE.InstancedMesh(trunkGeo, trunkMat, nT);
+  const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), sc = new THREE.Vector3(), col = new THREE.Color();
+  let io = 0, ic = 0;
+  for (let t = 0; t < nT; t++) {
+    const o = t * 7, x = T.getInt16(o, true) * 0.2, z = T.getInt16(o + 2, true) * 0.2;
+    const h = T.getUint8(o + 4) / 8, r = Math.max(T.getUint8(o + 5) / 20, 1.2), con = T.getUint8(o + 6);
+    const g = ground(x, z), rnd = Math.sin(t * 12.9898) * 43758.5453 % 1;
+    q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), rnd * 6.28);
+    if (con) {
+      m4.compose(V(x, g + h * 0.55, z), q, sc.set(r * 0.9, h * 0.9, r * 0.9)); cedars.setMatrixAt(ic, m4);
+      cedars.setColorAt(ic++, col.setHSL(0.30 + rnd * 0.03, 0.32, 0.20 + Math.abs(rnd) * 0.05));
+    } else {
+      m4.compose(V(x, g + h * 0.62, z), q, sc.set(r, h * 0.38, r)); oaks.setMatrixAt(io, m4);
+      oaks.setColorAt(io++, col.setHSL(0.24 + rnd * 0.04, 0.38, 0.22 + Math.abs(rnd) * 0.06));
+    }
+    m4.compose(V(x, g + h * 0.3, z), q, sc.set(1, h * 0.6, 1)); trunks.setMatrixAt(t, m4);
+  }
+  [oaks, cedars, trunks].forEach(m => { m.instanceMatrix.needsUpdate = true; if (m.instanceColor) m.instanceColor.needsUpdate = true; scene.add(m); });
+
+  // ---------- flags and tee markers
+  const poleGeo = new THREE.CylinderGeometry(0.05, 0.05, 2.4, 6), flagGeo = new THREE.PlaneGeometry(0.75, 0.5);
+  const poleMat = new THREE.MeshLambertMaterial({ color: 0xf4f4f0 });
+  const flagMat = new THREE.MeshLambertMaterial({ color: 0xe8c547, side: THREE.DoubleSide });
+  const teeMat = new THREE.MeshLambertMaterial({ color: 0x2a5bd7 });
+  const lineMat = new THREE.LineDashedMaterial({ color: 0xffffff, dashSize: 6, gapSize: 4, transparent: true, opacity: 0.85 });
+  const holeLines = new THREE.Group(); scene.add(holeLines);
+  for (const h of C.holes) {
+    const [px, , pz] = h.pin, gy = ground(px, pz);
+    const pole = new THREE.Mesh(poleGeo, poleMat); pole.position.copy(V(px, gy + 1.2, pz)); scene.add(pole);
+    const f = new THREE.Mesh(flagGeo, flagMat); f.position.copy(V(px + 0.38, gy + 2.15, pz)); scene.add(f);
+    const [tx, , tz] = h.tee, ty = ground(tx, tz);
+    for (const d of [-2.5, 2.5]) { const b = new THREE.Mesh(new THREE.SphereGeometry(0.22, 8, 6), teeMat); b.position.copy(V(tx + d, ty + 0.2, tz)); scene.add(b); }
+    const pts = [h.tee, ...h.aims, h.pin].map(p => V(p[0], ground(p[0], p[2]) + 1.5, p[2]));
+    const lg = new THREE.BufferGeometry().setFromPoints(pts);
+    const ln = new THREE.Line(lg, lineMat); ln.computeLineDistances(); ln.visible = false; ln.userData.key = h.n + '-' + h.h;
+    holeLines.add(ln);
+  }
+
+  // ---------- UI
+  const nineOf = name => +String(name).replace(/\D/g, '');
+  let routing = C.routings[0], current = null;
+  const elR = document.getElementById('routings'), elH = document.getElementById('holes'), card = document.getElementById('card');
+  function holeList(r) {
+    const a = nineOf(r.front), b = nineOf(r.back);
+    const by = (n) => C.holes.filter(h => h.n === n).sort((p, q) => p.h - q.h);
+    return [...by(a), ...by(b)];
+  }
+  function drawRoutings() {
+    elR.innerHTML = '';
+    for (const r of C.routings) {
+      const b = document.createElement('button');
+      b.textContent = r.name.replace('Course ', 'Course ') + ' · par ' + r.par;
+      b.setAttribute('aria-pressed', r === routing);
+      b.onclick = () => { routing = r; drawRoutings(); drawHoles(); select(holeList(r)[0], 'tee'); };
+      elR.appendChild(b);
+    }
+  }
+  function drawHoles() {
+    elH.innerHTML = '';
+    document.getElementById('holesLabel').textContent = routing.front + ' (1–9) · ' + routing.back + ' (10–18)';
+    holeList(routing).forEach((h, i) => {
+      const b = document.createElement('button'); b.textContent = i + 1;
+      b.setAttribute('aria-label', 'Hole ' + (i + 1) + ', par ' + h.par);
+      b.setAttribute('aria-pressed', current === h);
+      b.onclick = () => select(h, 'tee');
+      elH.appendChild(b);
+    });
+  }
+  function select(h, view) {
+    current = h; drawHoles();
+    const num = holeList(routing).indexOf(h) + 1;
+    const el = h.elev;
+    card.innerHTML = `<div class="t">Hole ${num}<small>Creek ${h.n} · #${h.h}</small></div>
+      <div class="stat"><b>${h.par}</b><span>Par</span></div>
+      <div class="stat"><b>${h.yds}</b><span>Yards</span></div>
+      <div class="stat"><b>${el > 0 ? '+' : ''}${(el * 3.281).toFixed(0)}</b><span>Feet up/dn</span></div>
+      <div class="stat"><b>${h.aims.length ? 'Dogleg' : 'Straight'}</b><span>Shape</span></div>`;
+    holeLines.children.forEach(l => l.visible = l.userData.key === h.n + '-' + h.h);
+    if (view === 'fly') flyover(h); else teeView(h);
+  }
+
+  // ---------- cameras
+  const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  let anim = null;
+  function moveTo(camPos, target, ms = 1400) {
+    if (reduce) ms = 0;
+    const p0 = camera.position.clone(), t0 = controls.target.clone(), start = performance.now();
+    anim = (now) => {
+      const k = ms ? Math.min(1, (now - start) / ms) : 1, e = k < 0.5 ? 2 * k * k : 1 - Math.pow(-2 * k + 2, 2) / 2;
+      camera.position.lerpVectors(p0, camPos, e); controls.target.lerpVectors(t0, target, e);
+      if (k >= 1) anim = null;
+    };
+  }
+  function firstAim(h) { return h.aims.length ? h.aims[0] : h.pin; }
+  function teeView(h) {
+    const [tx, , tz] = h.tee, [ax, , az] = firstAim(h);
+    const d = Math.hypot(ax - tx, az - tz), ux = (ax - tx) / d, uz = (az - tz) / d;
+    const bx = tx - ux * 20, bz = tz - uz * 20;
+    const camPos = V(bx, ground(bx, bz) + 9, bz);
+    const tgt = V(tx + ux * 220, ground(tx + ux * 220, tz + uz * 220), tz + uz * 220);
+    moveTo(camPos, tgt);
+  }
+  function flyover(h) {
+    const path = [h.tee, ...h.aims, h.pin];
+    let L = 0; const seg = [];
+    for (let i = 1; i < path.length; i++) { const l = Math.hypot(path[i][0] - path[i - 1][0], path[i][2] - path[i - 1][2]); seg.push(l); L += l; }
+    const at = (u) => { let s = u * L; for (let i = 0; i < seg.length; i++) { if (s <= seg[i] || i === seg.length - 1) { const k = Math.min(1, s / seg[i]); return [path[i][0] + (path[i + 1][0] - path[i][0]) * k, path[i][2] + (path[i + 1][2] - path[i][2]) * k]; } s -= seg[i]; } };
+    const dur = reduce ? 0 : Math.max(6000, L * 18), start = performance.now();
+    anim = (now) => {
+      const k = dur ? Math.min(1, (now - start) / dur) : 1, u = k * 0.92;
+      const [x, z] = at(u), [lx, lz] = at(Math.min(1, u + 0.12));
+      const hgt = 26 + 30 * Math.sin(Math.PI * Math.min(1, k * 1.05));
+      camera.position.copy(V(x, ground(x, z) + hgt, z));
+      controls.target.copy(V(lx, ground(lx, lz), lz));
+      if (k >= 1) { anim = null; const [gx, , gz] = h.pin; const [px, pz] = at(0.86); moveTo(V(px, ground(px, pz) + 14, pz), V(gx, ground(gx, gz), gz), 900); }
+    };
+  }
+  function overview() {
+    holeLines.children.forEach(l => l.visible = false);
+    moveTo(V(250, 1250, -1450), V(-150, 0, 50), 1600);
+  }
+  document.getElementById('vTee').onclick = () => current && teeView(current);
+  document.getElementById('vFly').onclick = () => current && flyover(current);
+  document.getElementById('vAll').onclick = overview;
+  canvas.addEventListener('pointerdown', () => { anim = null; });
+  const panel = document.getElementById('panel'), cb = document.getElementById('collapse');
+  cb.onclick = () => { const min = panel.classList.toggle('min'); cb.textContent = min ? 'Holes' : 'Hide'; cb.setAttribute('aria-expanded', !min); };
+
+  addEventListener('resize', () => { camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight); });
+  camera.position.copy(V(250, 1250, -1450)); controls.target.copy(V(-150, 0, 50));
+  drawRoutings(); drawHoles();
+  select(holeList(routing)[0], 'tee');
+  status.hidden = true;
+  renderer.setAnimationLoop((now) => { if (anim) anim(now); controls.update(); renderer.render(scene, camera); });
+})();
+</script>
