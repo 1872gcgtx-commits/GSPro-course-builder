@@ -4,6 +4,7 @@ Usage: python scripts/make_preview.py <course dir> <out dir>
 Writes data.json + tex.jpg; serve them next to pipeline/preview/index.html.
 """
 import sys, json, gzip, base64, numpy as np
+from pathlib import Path
 sys.path.insert(0, str(__import__('pathlib').Path(__file__).resolve().parents[1]))
 from PIL import Image, ImageFilter
 from scipy import ndimage
@@ -93,5 +94,36 @@ pack = lambda a: base64.b64encode(gzip.compress(a.tobytes(), 9)).decode()
 meta = {'nx': nx, 'nz': nz, 'step': STEP, 'x0': x0, 'z1': z1, 'hmin': hmin, 'holes': holes,
         'routings': json.load(open(O + 'routings/routings.json')) if True else None}
 meta['bin'] = {'h': pack(hq), 'w': pack(wq), 't': pack(tb)}
+
+# ---- homes (output/homes/homes.obj): vertices + triangles + a finish index per vertex
+hobj = Path(O) / 'homes' / 'homes.obj'
+if hobj.exists():
+    import re
+    mtl = {}
+    for blk in (Path(O) / 'homes' / 'homes.mtl').read_text().split('newmtl ')[1:]:
+        name = blk.split()[0]; kd = re.search(r'Kd ([\d.]+) ([\d.]+) ([\d.]+)', blk)
+        mtl[name] = [float(kd.group(i)) for i in (1, 2, 3)]
+    names = list(mtl)
+    vs, tris, vm, cur = [], [], {}, None
+    for line in open(hobj):
+        if line.startswith('v '):
+            _, a, b, c = line.split(); vs.append((float(a), float(b), -float(c)))   # back to z north
+        elif line.startswith('usemtl'):
+            cur = names.index(line.split()[1])
+        elif line.startswith('f '):
+            t = [int(x.split('/')[0]) - 1 for x in line.split()[1:]]
+            tris.append(t)
+            for i in t:
+                vm[i] = cur
+    V = np.array(vs); T = np.array(tris, '<u4')
+    keep = (V[:, 0] > x0) & (V[:, 0] < x1) & (V[:, 2] > z0) & (V[:, 2] < z1)
+    T = T[keep[T].all(1)]
+    hv = np.zeros(len(V), dtype=[('x', '<i2'), ('y', '<u2'), ('z', '<i2'), ('m', 'u1')])
+    hv['x'] = np.round(V[:, 0] * 10).astype('<i2'); hv['z'] = np.round(V[:, 2] * 10).astype('<i2')
+    hv['y'] = np.round((V[:, 1] - hmin + 5) * 100).clip(0, 65535).astype('<u2')
+    hv['m'] = [vm.get(i, 0) for i in range(len(V))]
+    meta['bin']['hv'] = pack(hv); meta['bin']['ht'] = pack(T)
+    meta['homeMaterials'] = [mtl[n] for n in names]
+    print(f"homes: {len(V)} vertices, {len(T)} triangles")
 json.dump(meta, open(OUT + '/data.json', 'w'), separators=(',', ':'))
-print(f"{nx}x{nz} grid, {len(t)} trees -> {OUT}/data.json, {OUT}/tex.jpg")
+print(f"{nx}x{nz} grid, {len(tb)} trees -> {OUT}/data.json, {OUT}/tex.jpg")

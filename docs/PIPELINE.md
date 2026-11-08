@@ -92,6 +92,44 @@ Without LiDAR canopy, trees are scattered at natural spacing inside the layout's
 `trees` areas. The output is `trees.csv`. The Unity importer plants them as terrain
 trees, using your prefabs or placeholders.
 
+### Homes around the course
+Footprints come from **Microsoft Global ML Building Footprints** (open data, ODbL;
+`fetch --only buildings`), which include houses built after the LiDAR was flown. Houses
+the LiDAR saw but the footprint data misses are traced from the LiDAR's building returns.
+Footprints are shifted onto the LiDAR first (best overlap with its building returns).
+Each house gets:
+
+- **Height:** the LiDAR roof height where the LiDAR saw that house, otherwise the
+  footprint's own estimate, otherwise a single-storey default.
+- **Roof:** a hipped roof at a 5:12 pitch, built from the footprint's inset outlines, so
+  every roof plane is flat and hips and valleys meet exactly. The roof has a 0.5 m eave
+  overhang, and large buildings get a flat-topped hip.
+- **Walls:** from the lowest ground under the footprint up to the eave.
+- **Finishes:** the roof finish is classed from the aerial photo (grey, charcoal, light
+  metal, tan, brown, terracotta, green metal). The wall finish is drawn from the local
+  palette: cream limestone, rustic stone, tan brick, red brick, white stucco.
+
+Footprints on greens, fairways, tees, bunkers or water are dropped, and trees standing
+inside a house lot are removed.
+
+The build writes the following to `output/homes/`:
+
+- `homes.obj` + `homes.mtl`: one object per 250 m tile (`Homes_##_##`) for culling, with
+  one sub-mesh per finish. Axes match `course_surfaces.obj`. Wall UVs are in 3 m units,
+  so a tiling facade texture with windows lines up storey by storey. Roof UVs are planar,
+  in 4 m units.
+- `homes.json`: one record per house (footprint, ground/eave/ridge heights, height
+  source, finishes).
+
+**Unity 6:**
+1. Import `homes.obj`. Use Scale 1 and the same rotation as `course_surfaces.obj`. Set
+   Normals to Calculate with a 30° smoothing angle, so roof planes stay crisp.
+2. Remap the materials by name (`Home_Wall_*`, `Home_Roof_*`) to PBR materials. Use
+   facade textures with windows for the walls, and shingle or standing-seam metal for
+   the roofs.
+3. Mark the tiles Static, enable occlusion culling, and add an LOD Group if needed.
+   The whole neighbourhood is about 120k triangles.
+
 ### Holes
 * Tees per tee set, from back to forward tee pads.
 * Aim points come from the hole line's dog-leg vertices.

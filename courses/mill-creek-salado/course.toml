@@ -63,3 +63,6 @@ offset_m = 0.0             # lift course-surface meshes above terrain (e.g. 0.02
 2 = "Creek 2"
 3 = "Creek 3"
 # Routings default to every pair: Course 1-2, Course 1-3, Course 2-3
+
+[homes]                    # houses around the course (Microsoft open footprints + LiDAR heights)
+margin_m = 400             # build homes within this distance of the property outline

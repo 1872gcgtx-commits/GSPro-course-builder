@@ -39,6 +39,7 @@ class CourseConfig:
     nine_names: dict = field(default_factory=dict)   # {1: "Creek 1", ...}
     boundary: list = field(default_factory=list)     # property outline [[lon, lat], ...]
     routings: list = field(default_factory=list)     # [{name, front, back}]; empty = every pair
+    homes: dict = field(default_factory=dict)        # -> HomesConfig
 
     @property
     def data_dir(self) -> Path:
@@ -82,6 +83,7 @@ def load_config(path: str | Path) -> CourseConfig:
         svg_colors=dict(raw.get("svg", {}).get("colors", {})),
         grading=dict(raw.get("grading", {})),
         surfaces=dict(raw.get("surfaces", {})),
+        homes=dict(raw.get("homes", {})),
         foliage=dict(raw.get("foliage", {})),
         mesh_offset_m=float(raw.get("meshes", {}).get("offset_m", 0.0)),
         nine_names={int(k): str(v) for k, v in raw.get("nines", {}).items()},

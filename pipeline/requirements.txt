@@ -4,5 +4,6 @@ pillow>=10.0
 requests>=2.31
 laspy[lazrs]>=2.5     # LiDAR .laz point clouds
 pyproj>=3.6           # LiDAR CRS handling (State Plane, feet, EPT web-mercator)
+shapely>=2.0          # house footprints and roofs
 # optional: local DEM GeoTIFFs (terrain.source = "file") and compressed GeoTIFF responses
 # rasterio>=1.3

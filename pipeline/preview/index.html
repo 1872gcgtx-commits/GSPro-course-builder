@@ -89,7 +89,7 @@ button[aria-pressed="true"] { background: var(--chip-on); color: var(--chip-on-i
     <button id="vFly">Flyover</button>
     <button id="vAll">Whole course</button>
   </div>
-  <p class="hint hide-min" style="margin:0">Drag to orbit, right-drag to pan, scroll to zoom. Terrain from USGS LiDAR with graded greens, tees and bunkers; trees placed from the LiDAR canopy.</p>
+  <p class="hint hide-min" style="margin:0">Drag to orbit, right-drag to pan, scroll to zoom. Terrain from USGS LiDAR with graded greens, tees and bunkers; trees placed from the LiDAR canopy; homes from open building footprints with LiDAR roof heights.</p>
 </section>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
@@ -209,6 +209,23 @@ button[aria-pressed="true"] { background: var(--chip-on); color: var(--chip-on-i
   }
   [oaks, cedars, trunks].forEach(m => { m.instanceMatrix.needsUpdate = true; if (m.instanceColor) m.instanceColor.needsUpdate = true; scene.add(m); });
 
+  // ---------- homes (footprints + LiDAR heights, hipped roofs)
+  if (C.bin.hv) {
+    const hv = new DataView(await unpack(C.bin.hv)), ht = await unpack(C.bin.ht, Uint32Array);
+    const nv = hv.byteLength / 7, hp = new Float32Array(nv * 3), hc = new Float32Array(nv * 3);
+    for (let i = 0; i < nv; i++) {
+      const o = i * 7, m = C.homeMaterials[hv.getUint8(o + 6)];
+      hp[i * 3] = hv.getInt16(o, true) / 10; hp[i * 3 + 1] = (hv.getUint16(o + 2, true) / 100 - 5 + hmin) * EXAG;
+      hp[i * 3 + 2] = -hv.getInt16(o + 4, true) / 10;
+      hc[i * 3] = m[0]; hc[i * 3 + 1] = m[1]; hc[i * 3 + 2] = m[2];
+    }
+    const hg = new THREE.BufferGeometry();
+    hg.setAttribute('position', new THREE.BufferAttribute(hp, 3)); hg.setAttribute('color', new THREE.BufferAttribute(hc, 3));
+    hg.setIndex(new THREE.BufferAttribute(ht, 1));
+    const flat = hg.toNonIndexed(); flat.computeVertexNormals();
+    scene.add(new THREE.Mesh(flat, new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide })));
+  }
+
   // ---------- flags and tee markers
   const poleGeo = new THREE.CylinderGeometry(0.05, 0.05, 2.4, 6), flagGeo = new THREE.PlaneGeometry(0.75, 0.5);
   const poleMat = new THREE.MeshLambertMaterial({ color: 0xf4f4f0 });
@@ -322,6 +339,7 @@ button[aria-pressed="true"] { background: var(--chip-on); color: var(--chip-on-i
   camera.position.copy(V(250, 1250, -1450)); controls.target.copy(V(-150, 0, 50));
   drawRoutings(); drawHoles();
   select(holeList(routing)[0], 'tee');
+  window.courseView = { camera, controls, V, ground, moveTo };
   status.hidden = true;
   renderer.setAnimationLoop((now) => { if (anim) anim(now); controls.update(); renderer.render(scene, camera); });
 })();

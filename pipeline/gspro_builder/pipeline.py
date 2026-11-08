@@ -12,6 +12,7 @@ output/
   course_surfaces.obj           Hole##_Green/Tee/Fairway/Bunker + water planes, conformed
   water.json                    water bodies (level + mesh) for the Unity importer
   trees.csv                     individual trees (LiDAR) or scattered planting
+  homes/homes.obj, .mtl, .json  houses around the course (footprints + LiDAR heights, hipped roofs)
   overlay.jpg, <slug>_opcd.svg  tracing / OPCD SVG job input
   holes.json, greenkeeper.csv   tees, pins (front/middle/back), aim points, yardage
   build_report.json             grading + QA report and warnings
@@ -28,6 +29,7 @@ from .course_meshes import build_meshes, write_obj as write_surface_obj, write_w
 from .foliage import FoliageConfig, detect_trees, scatter_trees, write_trees_csv
 from .grading import GradingConfig, grade
 from .holes import build_holes, write_holes
+from .homes import HomesConfig, build_homes, homes_mask_filter, write_homes
 from .layout import load_layout
 from .mesh import write_obj
 from .raster import rasterize_instances
@@ -40,7 +42,7 @@ def log(msg: str) -> None:
     print(f"[gspro-builder] {msg}", flush=True)
 
 
-def fetch(cfg: CourseConfig, what: tuple[str, ...] = ("dem", "imagery", "layout")) -> None:
+def fetch(cfg: CourseConfig, what: tuple[str, ...] = ("dem", "imagery", "layout", "buildings")) -> None:
     d = cfg.data_dir
     d.mkdir(parents=True, exist_ok=True)
     if "dem" in what:
@@ -77,6 +79,16 @@ def fetch(cfg: CourseConfig, what: tuple[str, ...] = ("dem", "imagery", "layout"
         gj = fetch_osm(cfg.frame)
         (d / "osm.geojson").write_text(json.dumps(gj))
         log(f"  {len(gj['features'])} features")
+    if "buildings" in what and cfg.homes.get("enabled", True):
+        from .sources.buildings import fetch_ms_buildings
+        log("downloading building footprints (Microsoft Global ML Building Footprints)")
+        try:
+            gj = fetch_ms_buildings(cfg.frame, log=log)
+            (d / "buildings").mkdir(exist_ok=True)
+            (d / "buildings" / "ms_buildings.geojson").write_text(json.dumps(gj))
+            log(f"  {len(gj['features'])} footprints")
+        except Exception as e:   # homes are optional scenery
+            log(f"  building footprints unavailable ({e}); homes will be skipped")
 
 
 def _layout_geojson(cfg: CourseConfig) -> dict:
@@ -154,6 +166,21 @@ def build(cfg: CourseConfig) -> dict:
         ring = [cfg.frame.to_local(lon, lat) for lon, lat in cfg.boundary]
         trees = clip_to_boundary(trees, ring, fcfg.boundary_margin_m)
         log(f"trees: kept {len(trees)} of {before} inside the property outline (+{fcfg.boundary_margin_m:g} m)")
+    homes_rep = None
+    hcfg = HomesConfig.from_dict(cfg.homes)
+    fp_path = cfg.data_dir / "buildings" / "ms_buildings.geojson"
+    if hcfg.enabled and fp_path.exists():
+        from PIL import Image as _Image
+        naip = np.asarray(_Image.open(data / "overlay.jpg")) if (data / "overlay.jpg").exists() else None
+        ring = [cfg.frame.to_local(lon, lat) for lon, lat in cfg.boundary] if cfg.boundary else None
+        homes, homes_rep = build_homes(json.loads(fp_path.read_text()), cfg.frame, dem, base, layout, hcfg, chm,
+                                       masks["building"] if masks is not None else None, naip,
+                                       cfg.layout_shift_m, ring, log=log)
+        homes_rep.update(write_homes(homes, out / "homes", hcfg))
+        before = len(trees)
+        trees = homes_mask_filter(trees, homes)
+        log(f"homes: {len(homes)} houses ({homes_rep['triangles']} triangles); "
+            f"{before - len(trees)} trees removed from house lots")
     write_trees_csv(trees, out / "trees.csv")
     log(f"trees: {len(trees)}")
 
@@ -217,6 +244,7 @@ def build(cfg: CourseConfig) -> dict:
               "trees": {"count": len(trees),
                         "conifer": sum(t["type"] == "conifer" for t in trees),
                         "source": trees[0]["source"] if trees else None},
+              "homes": homes_rep,
               "holes": len(holes), "par": sum(h["par"] for h in holes),
               "routings": routing_summary, "warnings": warnings}
     (out / "build_report.json").write_text(json.dumps(report, indent=2))
