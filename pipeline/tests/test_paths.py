@@ -85,3 +85,15 @@ class Bridges(unittest.TestCase):
         # the cart path stops at the bridge: no path concrete over the span
         pc = V[np.array(T)[np.array(M) == "Path_Concrete"].ravel()]
         self.assertGreater(np.abs(pc[:, 0]).min(), 14.0)
+
+
+class TeePlacement(unittest.TestCase):
+    def test_card_distance(self):
+        from gspro_builder.teeplace import place_tees, point_back_from_green
+        line = [(0.0, 0.0), (0.0, 300.0)]                 # tee at z=0, green at z=300
+        p, d = point_back_from_green(line, 100.0)
+        self.assertAlmostEqual(p[1], 200.0, places=3); self.assertAlmostEqual(d[1], 1.0)
+        t = place_tees({(1, 1): line}, {(1, 1): {"White": 300, "Blue": 330}}, {(1, 1): {"Blue"}})
+        self.assertEqual([x["tee_set"] for x in t], ["White"])           # existing Blue kept, White added
+        c = np.mean(t[0]["ring"], axis=0)
+        self.assertAlmostEqual(c[1], 300 - 300 * 0.9144, delta=0.1)      # 300 yd back from the green
