@@ -108,7 +108,12 @@ def lidar_footprints(building_mask, frame, min_area_m2=40.0):
         if p.is_empty or p.geom_type != "Polygon":
             continue
         rect = p.minimum_rotated_rectangle
-        p = rect if p.area / max(rect.area, 1e-6) > 0.8 else p.simplify(0.8, preserve_topology=True)
+        rx, rz = np.array(rect.exterior.coords).T
+        sides = sorted(np.hypot(np.diff(rx), np.diff(rz))[:2])
+        fill = p.area / max(rect.area, 1e-6)
+        if fill < 0.55 or sides[0] < 4.0 or sides[1] / max(sides[0], 1e-6) > 5.0:
+            continue                       # bluffs, walls, bridges: not house-shaped
+        p = rect if fill > 0.8 else p.simplify(0.8, preserve_topology=True)
         out.append(shapely.geometry.polygon.orient(p, 1.0))
     return out
 
@@ -239,7 +244,11 @@ def build_homes(footprints: dict, frame, dem, base_elev, layout, cfg: HomesConfi
         zr = eave_o + cfg.pitch * np.minimum(dist, cap)
         tri = Delaunay(pts).simplices
         cen = pts[tri].mean(1)
-        tri = tri[shapely.contains_xy(Po, cen[:, 0], cen[:, 1])]
+        ok = shapely.contains_xy(Po, cen[:, 0], cen[:, 1])
+        for a_, b_ in ((0, 1), (1, 2), (2, 0)):        # every edge must stay inside the outline
+            mid = (pts[tri[:, a_]] + pts[tri[:, b_]]) / 2
+            ok &= shapely.contains_xy(Po.buffer(0.05), mid[:, 0], mid[:, 1])
+        tri = tri[ok]
         wall_top = eave_o + cfg.pitch * min(cfg.overhang_m, cap)
         # ---- colour
         roof_rgb = (0.4, 0.4, 0.4)
