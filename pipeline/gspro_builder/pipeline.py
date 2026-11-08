@@ -137,7 +137,7 @@ def build(cfg: CourseConfig) -> dict:
         log(f"layout: {n} traced shapes moved {cfg.layout_shift_m[0]:+.1f} m E, {cfg.layout_shift_m[1]:+.1f} m N onto the LiDAR")
 
     # ---- cart paths (traced + routed) and streets, before grading so the ground is shaped under them
-    cart_lines, streets = [], []
+    cart_lines, streets, bridges = [], [], []
     naip4_ = np.load(data / "naip4.npy", mmap_mode="r") if (data / "naip4.npy").exists() else None
     naip4_meta_ = json.loads((data / "naip4.json").read_text()) if naip4_ is not None else None
     if cfg.paths.get("enabled", True) and chm is not None and layout.holes:
@@ -152,9 +152,10 @@ def build(cfg: CourseConfig) -> dict:
             meta_f = ed_dir / "meta" / "paths.json"
             only_mine = bool(json.loads(meta_f.read_text()).get("data", json.loads(meta_f.read_text())).get("only_mine")) \
                 if meta_f.exists() else False
-            cart_lines, streets = lines_from_review(reviewed_lines(json.loads(reviewed_draft.read_text()), edits, only_mine),
-                                                    cfg.layout_shift_m)
-            log(f"cart paths + roads from the review page: {len(cart_lines)} cart path lines, {len(streets)} roads "
+            cart_lines, streets, bridges = lines_from_review(reviewed_lines(json.loads(reviewed_draft.read_text()), edits, only_mine),
+                                                             cfg.layout_shift_m, with_bridges=True)
+            log(f"cart paths + roads from the review page: {len(cart_lines)} cart path lines, {len(streets)} roads, "
+                f"{len(bridges)} bridges "
                 f"({len(edits)} edits by the owner{', only theirs' if only_mine else ''})")
         else:
             osm_cp = [ln for k, ln in layout.paths if k == "cartpath" and len(ln) > 1]
@@ -295,10 +296,13 @@ def build(cfg: CourseConfig) -> dict:
     write_trees_csv(trees, out / "trees.csv")
     log(f"trees: {len(trees)}")
     paths_rep = None
-    if cart_lines or streets:
+    if cart_lines or streets or bridges:
         from .paths import write_paths
         (out / "paths").mkdir(exist_ok=True)
-        paths_rep = write_paths(cart_lines, streets, dem, base, out / "paths", paths_water, cfg.layout_shift_m)
+        paths_rep = write_paths(cart_lines, streets, dem, base, out / "paths", paths_water, cfg.layout_shift_m, bridges)
+        for b_ in paths_rep.get("bridges", []):
+            log(f"bridge {b_['id']}: {b_['length_m']} m, carries {b_['carries']}, rises {b_['deck_rise_m']} m"
+                + (f" - note: {b_['note']}" if b_["note"] else ""))
         log(f"paths: {paths_rep.get('cart_path_km')} km cart path, {paths_rep.get('street_km')} km streets "
             f"({paths_rep['triangles']} triangles)")
 

@@ -59,3 +59,29 @@ class ReviewedPaths(unittest.TestCase):
         cart, streets = lines_from_review(list(got.values()), (1.0, -1.5))
         self.assertEqual(len(cart), 2); self.assertEqual(streets[0]["kind"], "service")
         self.assertAlmostEqual(cart[1][0][0], 1.0)                 # shifted into the LiDAR frame
+
+
+class Bridges(unittest.TestCase):
+    def test_profile_and_mesh(self):
+        from gspro_builder.paths import bridge_profile, bridge_style, path_meshes
+        frame = CourseFrame(-97.5, 31.0, 200.0)
+        n = 400; x = (np.arange(n) + 0.5) * 0.5 - 100
+        X, Z = np.meshgrid(x, -x)
+        ground = 110 - 4.0 * np.exp(-(X / 6.0) ** 2) + 0.02 * X          # a creek 4 m deep, banks at different heights
+        dem = DEM(ground.astype(np.float32), frame)
+        line = np.array([[-15.0, 0.0], [15.0, 0.0]])
+        pts, s, y = bridge_profile(dem, 100.0, line)
+        g = dem.sample(pts[:, 0], pts[:, 1]) - 100.0
+        self.assertAlmostEqual(y[0], g[0] + 0.05, places=2)                 # lands on the bank at each end
+        self.assertAlmostEqual(y[-1], g[-1] + 0.05, places=2)
+        mid = (s > 0.15 * s[-1]) & (s < 0.85 * s[-1])
+        self.assertTrue(np.all(y[mid] >= g[mid] + 0.5))                    # clears the creek
+        self.assertLess(np.abs(np.diff(y, 2)).max(), 0.05)                 # smooth: no kinks
+        self.assertEqual(bridge_style("old stone arch", "cart")["rail"], "Bridge_Stone")
+        self.assertEqual(bridge_style("", "cart")["deck"], "Bridge_Wood")
+        V, UV, T, M = path_meshes([np.array([[-40.0, 0.0], [40.0, 0.0]])], [], dem, 100.0,
+                                  bridges=[{"id": "b1", "line": line, "carries": "cart", "width": 3.0, "note": "wood deck"}])
+        self.assertIn("Bridge_Wood", M)
+        # the cart path stops at the bridge: no path concrete over the span
+        pc = V[np.array(T)[np.array(M) == "Path_Concrete"].ravel()]
+        self.assertGreater(np.abs(pc[:, 0]).min(), 14.0)

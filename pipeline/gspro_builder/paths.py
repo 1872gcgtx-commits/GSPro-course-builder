@@ -283,9 +283,16 @@ def _offsets(pts):
     return np.c_[-d[:, 1], d[:, 0]]          # left normal
 
 
-def path_meshes(cart_lines, streets, dem, base_elev, water=None):
+def path_meshes(cart_lines, streets, dem, base_elev, water=None, bridges=None):
     """Meshes in the internal frame (x east, y up, z north)."""
     mk = _Mesh()
+    bridges = bridges or []
+    bzones = None
+    if bridges:
+        import shapely
+        from shapely.geometry import LineString
+        bzones = shapely.union_all([LineString(b["line"]).buffer(b["width"] / 2 + 0.6, cap_style="flat") for b in bridges])
+        shapely.prepare(bzones)
     res = dem.res_m; h = dem.frame.size_m / 2; n = dem.data.shape[0]
 
     def wet(p):
@@ -312,6 +319,26 @@ def path_meshes(cart_lines, streets, dem, base_elev, water=None):
                  [(0, si / u_scale) for si in s], [(width / u_scale, si / u_scale) for si in s], mat)
         return pts, y, nrm, s
 
+    def outside_bridges(line):
+        """Split a line into the runs that are not on an owner-drawn bridge."""
+        if bzones is None:
+            return [np.asarray(line, float)]
+        import shapely
+        pts = _resample(line, 0.5)[0]
+        ok = ~shapely.contains_xy(bzones, pts[:, 0], pts[:, 1])
+        runs, cur = [], []
+        for q, k in zip(pts, ok):
+            if k:
+                cur.append(q)
+            else:
+                if len(cur) > 1:
+                    runs.append(np.array(cur))
+                cur = []
+        if len(cur) > 1:
+            runs.append(np.array(cur))
+        return runs
+
+    cart_lines = [run for ln in cart_lines for run in outside_bridges(ln)]
     for ln in cart_lines:
         r = ribbon(ln, CART_WIDTH, 0.05, "Path_Concrete", bridge=True)
         if r is None:
@@ -326,6 +353,43 @@ def path_meshes(cart_lines, streets, dem, base_elev, water=None):
                 lo = y[i0:i1] + 0.05; hi = lo + 0.9
                 mk.strip([np.array([p[0], a, p[1]]) for p, a in zip(q, lo)], [np.array([p[0], a, p[1]]) for p, a in zip(q, hi)],
                          [(si / 2, 0) for si in s[i0:i1]], [(si / 2, 0.5) for si in s[i0:i1]], "Bridge_Rail")
+    for b in bridges:
+        st = bridge_style(b["note"], b["carries"])
+        pts, s, y = bridge_profile(dem, base_elev, b["line"], water, low=st.get("low", False))
+        if len(pts) < 2:
+            continue
+        nrm = _offsets(pts); hw = b["width"] / 2
+        th = 0.35 if b["carries"] != "road" else 0.6                       # deck thickness
+        L3 = lambda off, yy: [np.array([p[0] + n[0] * off, a, p[1] + n[1] * off]) for p, n, a in zip(pts, nrm, yy)]  # noqa: E731
+        u = [(0, si / 2.0) for si in s]; u2 = [(b["width"] / 2.0, si / 2.0) for si in s]
+        mk.strip(L3(hw, y + 0.02), L3(-hw, y + 0.02), u, u2, st["deck"])              # deck
+        for side in (1, -1):
+            mk.strip(L3(side * hw, y + 0.02), L3(side * hw, y - th), [(si / 2, 0) for si in s],
+                     [(si / 2, th / 2) for si in s], st["beam"])                     # deck edge / beam
+            if st["rail_h"] > 0:
+                rh = st["rail_h"]
+                if st["solid_rail"]:
+                    mk.strip(L3(side * (hw + 0.1), y), L3(side * (hw + 0.1), y + rh), [(si / 2, 0) for si in s],
+                             [(si / 2, rh / 2) for si in s], st["rail"])
+                else:                                                         # top rail + mid rail + posts
+                    for hh in (rh, rh * 0.5):
+                        mk.strip(L3(side * (hw + 0.05), y + hh - 0.08), L3(side * (hw + 0.05), y + hh),
+                                 [(si / 2, 0) for si in s], [(si / 2, 0.05) for si in s], st["rail"])
+                    for i in range(0, len(pts), max(1, int(1.8 / 0.75))):
+                        p, n = pts[i], nrm[i]; c = p + n * side * (hw + 0.05); dd = np.array([-n[1], n[0]]) * 0.06
+                        q0, q1 = c - dd, c + dd
+                        mk.strip([np.array([q0[0], y[i], q0[1]]), np.array([q0[0], y[i] + rh, q0[1]])],
+                                 [np.array([q1[0], y[i], q1[1]]), np.array([q1[0], y[i] + rh, q1[1]])],
+                                 [(0, 0), (0, 0.5)], [(0.05, 0), (0.05, 0.5)], st["rail"])
+        for i in (0, len(pts) - 1):                                           # abutments into each bank
+            p, n = pts[i], nrm[i]
+            d = np.array([-n[1], n[0]]) * (1 if i == 0 else -1) * 0.8
+            a0, a1 = p + n * (hw + 0.2), p - n * (hw + 0.2)
+            yb = y[i] - th - 1.5
+            for q0, q1 in ((a0, a1), (a0 + d, a1 + d)):
+                mk.strip([np.array([q0[0], yb, q0[1]]), np.array([q0[0], y[i] - th, q0[1]])],
+                         [np.array([q1[0], yb, q1[1]]), np.array([q1[0], y[i] - th, q1[1]])],
+                         [(0, 0), (0, 0.6)], [(1.2, 0), (1.2, 0.6)], st["beam"])
     from scipy.spatial import cKDTree
     rank = {k: i for i, k in enumerate(["service", "living_street", "road", "unclassified", "residential", "tertiary",
                                         "secondary", "primary", "trunk", "motorway"])}
@@ -404,6 +468,17 @@ def path_textures(out_dir: Path) -> dict:
     dr.rectangle([0, 0, 64, 512 * 3 / 6], fill=(226, 186, 52))                   # dashed yellow: 3 m on, 3 m off
     tex["Road_Line"] = im
     tex["Bridge_Rail"] = Image.fromarray(surf((120, 92, 64), size=128, fine=12, coarse=8).clip(0, 255).astype(np.uint8))
+    a = surf((132, 100, 70), size=512, fine=10, coarse=6); im = Image.fromarray(a.clip(0, 255).astype(np.uint8)); dr = ImageDraw.Draw(im)
+    for k in range(0, 512, 37):                                                   # deck boards across the span
+        dr.line([0, k, 512, k], fill=(80, 60, 42), width=3)
+    tex["Bridge_Wood"] = im
+    a = surf((176, 164, 140), size=256, fine=10, coarse=8); im = Image.fromarray(a.clip(0, 255).astype(np.uint8)); dr = ImageDraw.Draw(im)
+    for k in range(0, 256, 32):
+        dr.line([0, k, 256, k], fill=(120, 110, 96), width=2)
+        for j in range((k // 32) % 2 * 24, 256, 48):
+            dr.line([j, k, j, k + 32], fill=(120, 110, 96), width=2)
+    tex["Bridge_Stone"] = im
+    tex["Bridge_Steel"] = Image.fromarray(surf((70, 74, 78), size=128, fine=4, coarse=3).clip(0, 255).astype(np.uint8))
     files = {}
     for k, im in tex.items():
         files[k] = f"{k}.png"; im.filter(ImageFilter.SMOOTH).save(out_dir / files[k])
@@ -425,12 +500,19 @@ def reviewed_lines(draft: dict, edits: list[dict], only_mine: bool = False):
     return list(lines.values())
 
 
-def lines_from_review(lines, shift, surface_of=None):
-    """Reviewed lines -> (cart lines in the LiDAR frame, street items). Hand-drawn lines are
-    rounded a little at the corners so paths curve the way they're poured."""
-    cart, streets = [], []
+def lines_from_review(lines, shift, surface_of=None, with_bridges=False):
+    """Reviewed lines -> (cart lines in the LiDAR frame, street items[, bridges]). Hand-drawn
+    lines are rounded a little at the corners so paths curve the way they're poured."""
+    cart, streets, bridges = [], [], []
     for l in lines:
         pts = np.asarray(l["pts"], float)
+        if l["kind"] == "bridge":
+            carries = l.get("carries", "cart")
+            q = pts if carries == "road" else pts + np.asarray(shift)
+            bridges.append({"id": l["id"], "line": _chaikin(q, 2) if len(q) > 2 else q, "carries": carries,
+                            "width": float(l.get("width") or {"cart": 3.0, "path": 2.0, "road": 8.0}.get(carries, 3.0)),
+                            "note": (l.get("note") or "").strip()})
+            continue
         if l["kind"] == "cart":
             q = pts + np.asarray(shift)                     # page/photo -> LiDAR frame, like traced shapes
             cart.append(_chaikin(q, 2) if (l.get("method") == "manual" or l.get("edited")) and len(q) > 2 else q)
@@ -440,7 +522,55 @@ def lines_from_review(lines, shift, surface_of=None):
                             "surface": l.get("surface") or "Road_Asphalt", "id": l["id"], "name": l.get("name"),
                             "curb": road in ("residential", "tertiary", "secondary", "living_street"),
                             "centre_line": road in ("tertiary", "secondary", "primary", "trunk")})
-    return cart, streets
+    return (cart, streets, bridges) if with_bridges else (cart, streets)
+
+
+def bridge_style(note: str, carries: str) -> dict:
+    """Deck / rail / beam finishes from the owner's note (keywords), with sensible defaults."""
+    n = (note or "").lower()
+    if any(k in n for k in ("stone", "rock", "limestone", "masonry")):
+        st = {"deck": "Path_Concrete", "rail": "Bridge_Stone", "beam": "Bridge_Stone", "rail_h": 0.75, "solid_rail": True}
+    elif any(k in n for k in ("steel", "metal", "iron")):
+        st = {"deck": "Bridge_Wood" if "wood" in n else "Path_Concrete", "rail": "Bridge_Steel", "beam": "Bridge_Steel",
+              "rail_h": 1.05, "solid_rail": False}
+    elif any(k in n for k in ("concrete", "culvert")) or carries == "road":
+        st = {"deck": "Road_Asphalt" if carries == "road" else "Path_Concrete", "rail": "Road_Curb", "beam": "Road_Curb",
+              "rail_h": 0.9, "solid_rail": True}
+    else:                                                   # wood / timber (default for cart bridges)
+        st = {"deck": "Bridge_Wood", "rail": "Bridge_Rail", "beam": "Bridge_Rail", "rail_h": 1.0, "solid_rail": False}
+    if "no rail" in n or "without rail" in n:
+        st["rail_h"] = 0.0
+    if "low" in n:
+        st["low"] = True
+    return st
+
+
+def bridge_profile(dem, base_elev, line, water=None, clearance=0.6, low=False):
+    """Deck centreline (pts, s, y): ends on the graded ground at each bank, a gentle arch
+    between, lifted to clear the ground beneath by `clearance`, smoothed so it never kinks."""
+    from scipy import ndimage
+    pts, s = _resample(line, 0.75)
+    if len(pts) < 2:
+        return pts, s, np.zeros(len(pts))
+    g = dem.sample(pts[:, 0], pts[:, 1]) - base_elev
+    L = s[-1]; t = s / max(L, 1e-6)
+    y0, y1 = g[0] + 0.05, g[-1] + 0.05
+    rise = 0.0 if low else float(np.clip(0.035 * L, 0.25, 1.4))
+    y = y0 + (y1 - y0) * t + rise * np.sin(np.pi * t)
+    inner = (t > 0.08) & (t < 0.92)
+    need = np.where(inner, g + (0.25 if low else clearance), -1e9)
+    base = y.copy()
+    sig = max(1.0, 0.06 * len(y))
+    for _ in range(4):                       # lift to clear the ground, then smooth, until both hold
+        y = np.maximum(y, need)
+        y = ndimage.gaussian_filter1d(y, sigma=sig, mode="nearest")
+    y = np.maximum(y, need)
+    y = ndimage.gaussian_filter1d(y, sigma=max(1.0, sig / 3), mode="nearest")
+    # pin both ends to the banks with a smooth hand-off over the first/last 10 % of the span
+    ss = lambda v: v * v * (3 - 2 * v)       # noqa: E731
+    w = ss(np.clip(t / 0.1, 0, 1)) * ss(np.clip((1 - t) / 0.1, 0, 1))
+    y = base * (1 - w) + y * w
+    return pts, s, y
 
 
 def draft_from_build(cart_lines, streets, shift) -> dict:
@@ -455,19 +585,33 @@ def draft_from_build(cart_lines, streets, shift) -> dict:
     return {"lines": out}
 
 
-def write_paths(cart_lines, streets, dem, base_elev, out_dir: Path, water=None, shift=(0.0, 0.0)) -> dict:
+def write_paths(cart_lines, streets, dem, base_elev, out_dir: Path, water=None, shift=(0.0, 0.0), bridges=None) -> dict:
     import json as _json
+    bridges = bridges or []
     (out_dir / "lines.json").write_text(_json.dumps(draft_from_build(cart_lines, streets, shift)))
+    binfo = []
+    for b in bridges:
+        st = bridge_style(b["note"], b["carries"])
+        pts, s, y = bridge_profile(dem, base_elev, b["line"], water, low=st.get("low", False))
+        if len(pts) < 2:
+            continue
+        binfo.append({"id": b["id"], "note": b["note"], "carries": b["carries"], "width_m": b["width"],
+                      "length_m": round(float(s[-1]), 1), "finish": {k: v for k, v in st.items() if k in ("deck", "rail", "beam")},
+                      "ends": [[round(float(pts[0][0]), 2), round(float(y[0]), 2), round(float(pts[0][1]), 2)],
+                               [round(float(pts[-1][0]), 2), round(float(y[-1]), 2), round(float(pts[-1][1]), 2)]],
+                      "deck_rise_m": round(float(np.max(y - (y[0] + (y[-1] - y[0]) * s / max(s[-1], 1e-6)))), 2)})
+    (out_dir / "bridges.json").write_text(_json.dumps({"bridges": binfo}, indent=1))
     files = path_textures(out_dir)
     with open(out_dir / "paths.mtl", "w") as f:
         for k, fn in files.items():
             f.write(f"newmtl {k}\nKd 1 1 1\nKs 0 0 0\nmap_Kd {fn}\n\n")
-    V, UV, T, M = path_meshes(cart_lines, streets, dem, base_elev, water)
+    V, UV, T, M = path_meshes(cart_lines, streets, dem, base_elev, water, bridges)
     if not len(T):
         return {"triangles": 0}
     vo = V * np.array([1.0, 1.0, -1.0])
     a, b, c = vo[T[:, 0]], vo[T[:, 1]], vo[T[:, 2]]
-    flip = np.cross(b - a, c - a)[:, 1] < 0                     # everything faces up (rails: either way)
+    nrm_ = np.cross(b - a, c - a)
+    flip = (nrm_[:, 1] < 0) & (np.abs(nrm_[:, 1]) > 0.5 * np.linalg.norm(nrm_, axis=1))   # flat parts face up
     T = T.copy(); T[flip] = T[flip][:, [0, 2, 1]]
     with open(out_dir / "paths.obj", "w") as f:
         f.write("# Cart paths, streets, curbs, bridges: metres, right-handed Y-up, x east, z SOUTH\nmtllib paths.mtl\n")
@@ -480,4 +624,5 @@ def write_paths(cart_lines, streets, dem, base_elev, out_dir: Path, water=None, 
             tt = T[Ma == m] + 1
             np.savetxt(f, np.column_stack([tt[:, 0], tt[:, 0], tt[:, 1], tt[:, 1], tt[:, 2], tt[:, 2]]), fmt="f %d/%d %d/%d %d/%d")
     lens = lambda ls: round(sum(float(np.sum(np.linalg.norm(np.diff(np.asarray(l), axis=0), axis=1))) for l in ls) / 1000, 2)  # noqa: E731
-    return {"triangles": int(len(T)), "cart_path_km": lens(cart_lines), "street_km": lens([s["line"] for s in streets])}
+    return {"triangles": int(len(T)), "cart_path_km": lens(cart_lines), "street_km": lens([s["line"] for s in streets]),
+            "bridges": binfo}

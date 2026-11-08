@@ -182,6 +182,32 @@ bunkers and water are left untouched. They are built as draped meshes in
 deck at a straight grade between the banks, plus wooden rails. They are also painted
 into the terrain's paved layer. The Unity importer places them with the homes.
 
+**Owner-drawn paths and bridges (review page, Paths tab).** Once `courses/<slug>/draft_paths.json`
+exists, the build stops routing cart paths. It uses the reviewed lines instead, merging
+the draft with the owner's edits pulled into `path_edits/`:
+
+- **Cart paths:** clicked along the middle of each path. Corners are rounded a little.
+- **Streets:** OpenStreetMap streets, plus any the owner fixed or added.
+- **Bridges:** drawn bank to bank, carrying a cart path, footpath or road, each with a
+  free-text note.
+
+Each bridge deck starts and ends on the graded ground at its banks. Between them it rises
+in a gentle arch (3.5 % of the span, 0.25–1.4 m). Over the water or ground beneath, the
+deck is lifted to keep at least 0.6 m of clearance, then smoothed so it never kinks.
+Notes with "low" keep it close to the water. The note's keywords pick the finish:
+
+| Keyword in the note | Finish |
+|---|---|
+| wood, timber (the default for cart bridges) | wood deck, timber rails |
+| stone, limestone, masonry | stone parapets and beams |
+| steel, metal | steel rails |
+| concrete | concrete deck and parapets |
+| no rail | no rails |
+
+Cart paths stop at a bridge's abutments and the deck carries on at the same height.
+`output/paths/bridges.json` lists each bridge with its note, length, end heights and
+deck rise.
+
 ### Homes around the course
 Footprints come from **Microsoft Global ML Building Footprints** (open data, ODbL;
 `fetch --only buildings`), which include many houses built after the LiDAR was flown.
