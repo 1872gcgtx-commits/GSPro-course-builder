@@ -360,7 +360,7 @@ def path_meshes(cart_lines, streets, dem, base_elev, water=None, bridges=None):
             continue
         nrm = _offsets(pts); hw = b["width"] / 2
         th = 0.35 if b["carries"] != "road" else 0.6                       # deck thickness
-        L3 = lambda off, yy: [np.array([p[0] + n[0] * off, a, p[1] + n[1] * off]) for p, n, a in zip(pts, nrm, yy)]  # noqa: E731
+        L3 = lambda off, yy: [np.array([p[0] + nv[0] * off, a, p[1] + nv[1] * off]) for p, nv, a in zip(pts, nrm, yy)]  # noqa: E731
         u = [(0, si / 2.0) for si in s]; u2 = [(b["width"] / 2.0, si / 2.0) for si in s]
         mk.strip(L3(hw, y + 0.02), L3(-hw, y + 0.02), u, u2, st["deck"])              # deck
         for side in (1, -1):
@@ -376,15 +376,15 @@ def path_meshes(cart_lines, streets, dem, base_elev, water=None, bridges=None):
                         mk.strip(L3(side * (hw + 0.05), y + hh - 0.08), L3(side * (hw + 0.05), y + hh),
                                  [(si / 2, 0) for si in s], [(si / 2, 0.05) for si in s], st["rail"])
                     for i in range(0, len(pts), max(1, int(1.8 / 0.75))):
-                        p, n = pts[i], nrm[i]; c = p + n * side * (hw + 0.05); dd = np.array([-n[1], n[0]]) * 0.06
+                        p, nv = pts[i], nrm[i]; c = p + nv * side * (hw + 0.05); dd = np.array([-nv[1], nv[0]]) * 0.06
                         q0, q1 = c - dd, c + dd
                         mk.strip([np.array([q0[0], y[i], q0[1]]), np.array([q0[0], y[i] + rh, q0[1]])],
                                  [np.array([q1[0], y[i], q1[1]]), np.array([q1[0], y[i] + rh, q1[1]])],
                                  [(0, 0), (0, 0.5)], [(0.05, 0), (0.05, 0.5)], st["rail"])
         for i in (0, len(pts) - 1):                                           # abutments into each bank
-            p, n = pts[i], nrm[i]
-            d = np.array([-n[1], n[0]]) * (1 if i == 0 else -1) * 0.8
-            a0, a1 = p + n * (hw + 0.2), p - n * (hw + 0.2)
+            p, nv = pts[i], nrm[i]
+            d = np.array([-nv[1], nv[0]]) * (1 if i == 0 else -1) * 0.8
+            a0, a1 = p + nv * (hw + 0.2), p - nv * (hw + 0.2)
             yb = y[i] - th - 1.5
             for q0, q1 in ((a0, a1), (a0 + d, a1 + d)):
                 mk.strip([np.array([q0[0], yb, q0[1]]), np.array([q0[0], y[i] - th, q0[1]])],
