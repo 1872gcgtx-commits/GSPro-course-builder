@@ -217,6 +217,17 @@ def build_homes(footprints: dict, frame, dem, base_elev, layout, cfg: HomesConfi
         cand = ndimage.binary_opening(ndimage.gaussian_filter(P_roof, 1) > 0.6, iterations=2)
         found = [shapely.affinity.translate(p, naip_shift[0], naip_shift[1])   # photo -> LiDAR frame
                  for p in mask_footprints(cand, g["res"], g["x0"], g["z1"])]
+    # remove spikes and slivers (thin wall-like tails on some footprints)
+    def _clean(p):
+        q = p.buffer(-0.6, join_style="mitre").buffer(0.6, join_style="mitre")
+        if q.is_empty:
+            return None
+        if q.geom_type != "Polygon":
+            q = max(q.geoms, key=lambda g_: g_.area)
+        return shapely.geometry.polygon.orient(q.simplify(0.2), 1.0) if q.area >= cfg.min_area_m2 else None
+    cleaned = [(_clean(p), hgt) for p, hgt in zip(polys, src_h)]
+    polys = [p for p, _ in cleaned if p is not None]; src_h = [hgt for p, hgt in cleaned if p is not None]
+    found = [q for q in (_clean(p) for p in found) if q is not None]
     shift, reg = register(polys, building_mask, frame)
     if any(shift):
         polys = [shapely.affinity.translate(p, shift[0], shift[1]) for p in polys]
