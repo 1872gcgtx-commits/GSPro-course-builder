@@ -120,19 +120,19 @@ for f in (Path(OUT) / 'tree_models').glob('*.png'):
     shutil.copy(f, Path(OUT) / f.name)
 
 # ---- homes (output/homes/homes.obj): vertices + triangles + a finish index per vertex
-hobj = Path(O) / 'homes' / 'homes.obj'
-if hobj.exists():
+def textured_obj(obj, mtl, prefix):
+    """OBJ (x east, z south) + MTL -> compact preview arrays: verts (x,y,z,u,v), tris, groups, textures."""
     import re, shutil
     names, tex = [], {}
-    for blk in (Path(O) / 'homes' / 'homes.mtl').read_text().split('newmtl ')[1:]:
+    for blk in mtl.read_text().split('newmtl ')[1:]:
         name = blk.split()[0]; m_ = re.search(r'map_Kd (\S+)', blk)
         names.append(name); tex[name] = m_.group(1) if m_ else None
         if m_:
-            shutil.copy(Path(O) / 'homes' / m_.group(1), Path(OUT) / ('home_' + m_.group(1)))
+            shutil.copy(mtl.parent / m_.group(1), Path(OUT) / (prefix + m_.group(1)))
     vs, vts, tris, cur = [], [], [], 0
-    for line in open(hobj):
+    for line in open(obj):
         if line.startswith('v '):
-            _, a_, b_, c_ = line.split(); vs.append((float(a_), float(b_), -float(c_)))   # back to z north
+            _, a_, b_, c_ = line.split(); vs.append((float(a_), float(b_), -float(c_)))
         elif line.startswith('vt '):
             _, u_, v_ = line.split(); vts.append((float(u_), float(v_)))
         elif line.startswith('usemtl'):
@@ -147,12 +147,17 @@ if hobj.exists():
     hv = np.zeros(len(V), dtype=[('x', '<i2'), ('y', '<u2'), ('z', '<i2'), ('u', '<i2'), ('v', '<i2')])
     hv['x'] = np.round(V[:, 0] * 10).astype('<i2'); hv['z'] = np.round(V[:, 2] * 10).astype('<i2')
     hv['y'] = np.round((V[:, 1] - hmin + 5) * 100).clip(0, 65535).astype('<u2')
-    uvw = np.mod(UVa, 600.0) * 50                     # tiling textures: wrap large UVs into range
+    uvw = np.mod(UVa, 600.0) * 50
     hv['u'] = np.round(uvw[:, 0] - 15000).astype('<i2'); hv['v'] = np.round(uvw[:, 1] - 15000).astype('<i2')
-    T = TT[:, :3].astype('<u4')
-    meta['bin']['hv'] = pack(hv); meta['bin']['ht'] = pack(T)
-    meta['homeGroups'] = groups
-    meta['homeMaterials'] = [('home_' + tex[n]) if tex[n] else None for n in names]
-    print(f"homes: {len(V)} vertices, {len(T)} triangles")
+    return {'v': pack(hv), 't': pack(TT[:, :3].astype('<u4')), 'groups': groups,
+            'materials': [(prefix + tex[n]) if tex[n] else None for n in names], 'nv': len(V), 'nt': len(TT)}
+
+
+meta['meshes'] = {}
+for key, sub, prefix in (('homes', 'homes', 'home_'), ('paths', 'paths', 'path_')):
+    obj = Path(O) / sub / f'{sub}.obj'
+    if obj.exists():
+        meta['meshes'][key] = textured_obj(obj, Path(O) / sub / f'{sub}.mtl', prefix)
+        print(f"{key}: {meta['meshes'][key]['nv']} vertices, {meta['meshes'][key]['nt']} triangles")
 json.dump(meta, open(OUT + '/data.json', 'w'), separators=(',', ':'))
 print(f"{nx}x{nz} grid, {len(tb)} trees -> {OUT}/data.json, {OUT}/tex.jpg")

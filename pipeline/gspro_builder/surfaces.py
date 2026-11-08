@@ -66,8 +66,10 @@ def rasterize_labels(layout: Layout, frame: CourseFrame, res: int, cfg: SurfaceC
             for inner in s.rings[1:]:
                 draw.polygon([px(p) for p in inner], fill=L["rough"])
         for pkind, line in layout.paths:
-            if pkind == kind and len(line) > 1:
-                w = max(1, int(round(PATH_WIDTH_M.get(kind, 2.0) / frame.size_m * res)))
+            is_road = kind == "cartpath" and pkind.startswith("road:")       # streets paint the paved layer
+            if (pkind == kind or is_road) and len(line) > 1:
+                wm = float(pkind.split(":")[1]) if is_road else PATH_WIDTH_M.get(kind, 2.0)
+                w = max(1, int(round(wm / frame.size_m * res)))
                 draw.line([px(p) for p in line], fill=L[kind], width=w, joint="curve")
     lab = np.array(img, dtype=np.uint8)
     cell = frame.size_m / res

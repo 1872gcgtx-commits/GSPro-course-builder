@@ -14,6 +14,7 @@ output/
   trees.csv                     individual trees (LiDAR) or scattered planting
   homes/homes.obj, .mtl, .json  houses around the course (footprints + LiDAR heights, hipped roofs)
   tree_models/<species>_<n>.obj procedural tree models per species (bark + alpha leaf cards)
+  paths/paths.obj, .mtl          cart paths (traced + routed), streets with curbs, bridges, draped
   overlay.jpg, <slug>_opcd.svg  tracing / OPCD SVG job input
   holes.json, greenkeeper.csv   tees, pins (front/middle/back), aim points, yardage
   build_report.json             grading + QA report and warnings
@@ -135,9 +136,40 @@ def build(cfg: CourseConfig) -> dict:
         n = shift_traced(layout, *cfg.layout_shift_m)
         log(f"layout: {n} traced shapes moved {cfg.layout_shift_m[0]:+.1f} m E, {cfg.layout_shift_m[1]:+.1f} m N onto the LiDAR")
 
+    # ---- cart paths (traced + routed) and streets, before grading so the ground is shaped under them
+    cart_lines, streets = [], []
+    naip4_ = np.load(data / "naip4.npy", mmap_mode="r") if (data / "naip4.npy").exists() else None
+    naip4_meta_ = json.loads((data / "naip4.json").read_text()) if naip4_ is not None else None
+    if cfg.paths.get("enabled", True) and chm is not None and layout.holes:
+        from .paths import cartpath_probability, route_cartpaths, street_items
+        osm_cp = [ln for k, ln in layout.paths if k == "cartpath" and len(ln) > 1]
+        Pcp, gcp = cartpath_probability(naip4_, naip4_meta_, osm_cp) if (naip4_ is not None and osm_cp) else (None, None)
+        log("cart paths: routing green -> tee and along each hole (aerial + mapped paths)")
+        cart_lines = route_cartpaths(layout, cfg.frame, chm, raw_dem.data,
+                                     masks["building"] if masks is not None else None,
+                                     masks["water"] if masks is not None else None, Pcp, gcp, cfg.layout_shift_m)
+        layout.paths = [p_ for p_ in layout.paths if p_[0] != "cartpath"] + [("cartpath", [tuple(q) for q in ln]) for ln in cart_lines]
+        if (data / "roads.geojson").exists():
+            streets = street_items(json.loads((data / "roads.geojson").read_text()), cfg.frame, naip4_, naip4_meta_,
+                                   cfg.layout_shift_m)
+            layout.paths += [(f"road:{st_['width']:g}", [tuple(q) for q in st_["line"]]) for st_ in streets]
+
     log("grading: fairways, greens, tees, bunkers, water")
     g = grade(raw_dem, layout, GradingConfig.from_dict(cfg.grading))
     dem = g.dem
+    paths_water = None
+    if cart_lines or streets:
+        from .paths import grade_paths
+        from .raster import rasterize_instances as _ri2
+        nn_ = dem.data.shape[0]
+        protect = _ri2([s_ for s_ in layout.surfaces if s_.kind in ("green", "tee", "bunker", "water")], cfg.frame, nn_) > 0
+        paths_water = protect & (_ri2([s_ for s_ in layout.surfaces if s_.kind == "water"], cfg.frame, nn_) > 0)
+        if masks is not None and masks["water"].shape == protect.shape:
+            paths_water = paths_water | masks["water"]
+        items = [{"line": ln, "width": 2.5, "smooth_m": 6.0, "shoulder_m": 1.5} for ln in cart_lines] + \
+                [{"line": st_["line"], "width": st_["width"] + 1.0, "smooth_m": 20.0, "shoulder_m": 3.0} for st_ in streets]
+        ncell = grade_paths(dem, items, water=paths_water, protect=protect)
+        log(f"paths: {len(cart_lines)} cart path runs, {len(streets)} streets graded ({ncell * dem.res_m ** 2 / 1e4:.1f} ha)")
 
     log(f"terrain -> {cfg.heightmap_res}x{cfg.heightmap_res} RAW "
         f"({cfg.frame.size_m / (cfg.heightmap_res - 1):.2f} m spacing)")
@@ -241,6 +273,13 @@ def build(cfg: CourseConfig) -> dict:
              "note": "trees.csv `species` column; map each to a prefab (young/mature/old by size_class)"}, indent=1))
     write_trees_csv(trees, out / "trees.csv")
     log(f"trees: {len(trees)}")
+    paths_rep = None
+    if cart_lines or streets:
+        from .paths import write_paths
+        (out / "paths").mkdir(exist_ok=True)
+        paths_rep = write_paths(cart_lines, streets, dem, base, out / "paths", paths_water)
+        log(f"paths: {paths_rep.get('cart_path_km')} km cart path, {paths_rep.get('street_km')} km streets "
+            f"({paths_rep['triangles']} triangles)")
 
     overlay = None
     if (data / "overlay.jpg").exists():
@@ -302,7 +341,7 @@ def build(cfg: CourseConfig) -> dict:
               "trees": {"count": len(trees), **tree_rep,
                         "conifer": sum(t["type"] == "conifer" for t in trees),
                         "source": trees[0]["source"] if trees else None},
-              "homes": homes_rep,
+              "homes": homes_rep, "paths": paths_rep,
               "holes": len(holes), "par": sum(h["par"] for h in holes),
               "routings": routing_summary, "warnings": warnings}
     (out / "build_report.json").write_text(json.dumps(report, indent=2))

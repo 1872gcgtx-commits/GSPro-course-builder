@@ -75,7 +75,7 @@ namespace GSProCourseBuilder.Editor
                         speciesPrefabs[i] = (GameObject)EditorGUILayout.ObjectField("    " + Species[i], speciesPrefabs[i], typeof(GameObject), false);
             }
             importMeshes = EditorGUILayout.Toggle("Course surface meshes (OBJ)", importMeshes);
-            importHomes = EditorGUILayout.Toggle("Homes (homes/homes.obj)", importHomes);
+            importHomes = EditorGUILayout.Toggle("Homes, cart paths, streets", importHomes);
             EditorGUILayout.HelpBox("Empty slots get placeholder assets (flat-colour layers, simple trees, " +
                                     "blue water). Swap in real grass/sand textures, SpeedTree/tree prefabs " +
                                     "and your water shader afterwards - re-importing keeps your layer textures.",
@@ -538,9 +538,15 @@ namespace GSProCourseBuilder.Editor
         /// model is turned 180 degrees about Y to restore east/north).
         static void ImportHomes(string dir, GameObject root, string assetDir)
         {
-            var src = Path.Combine(dir, "homes");
-            if (!File.Exists(Path.Combine(src, "homes.obj"))) return;
-            var dst = $"{assetDir}/Homes";
+            ImportObjFolder(dir, root, assetDir, "homes", "Homes");
+            ImportObjFolder(dir, root, assetDir, "paths", "Paths");     // cart paths, streets, curbs, bridges
+        }
+
+        static void ImportObjFolder(string dir, GameObject root, string assetDir, string sub, string label)
+        {
+            var src = Path.Combine(dir, sub);
+            if (!File.Exists(Path.Combine(src, $"{sub}.obj"))) return;
+            var dst = $"{assetDir}/{label}";
             Directory.CreateDirectory(dst);
             foreach (var f in Directory.GetFiles(src))
             {
@@ -548,17 +554,17 @@ namespace GSProCourseBuilder.Editor
                 if (ext == ".obj" || ext == ".mtl" || ext == ".png") File.Copy(f, $"{dst}/{Path.GetFileName(f)}", true);
             }
             AssetDatabase.Refresh();
-            var model = AssetDatabase.LoadAssetAtPath<GameObject>($"{dst}/homes.obj");
-            if (!model) { Debug.LogWarning("[GSPro Builder] homes.obj did not import"); return; }
-            var old = root.transform.Find("Homes");
+            var model = AssetDatabase.LoadAssetAtPath<GameObject>($"{dst}/{sub}.obj");
+            if (!model) { Debug.LogWarning($"[GSPro Builder] {sub}.obj did not import"); return; }
+            var old = root.transform.Find(label);
             if (old) Object.DestroyImmediate(old.gameObject);
             var inst = (GameObject)PrefabUtility.InstantiatePrefab(model);
-            inst.name = "Homes";
+            inst.name = label;
             inst.transform.SetParent(root.transform, false);
             inst.transform.localRotation = Quaternion.Euler(0f, 180f, 0f);
             foreach (var r in inst.GetComponentsInChildren<Renderer>())
                 r.gameObject.isStatic = true;
-            Debug.Log($"[GSPro Builder] Homes placed ({inst.transform.childCount} tiles)");
+            Debug.Log($"[GSPro Builder] {label} placed ({inst.transform.childCount} objects)");
         }
 
         // ---------------------------------------------------------------- water
