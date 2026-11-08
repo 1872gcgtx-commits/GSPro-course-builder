@@ -29,6 +29,7 @@ class CourseConfig:
     imagery_source: str = "naip"      # naip | none
     layout_source: str = "osm"        # osm | geojson
     layout_file: str = "features.geojson"
+    layout_shift_m: tuple = (0.0, 0.0)  # (east, north) moving shapes traced on the aerial onto the LiDAR
     tee_sets: list[str] = field(default_factory=lambda: ["Black", "Blue", "White", "Red"])
     svg_colors: dict = field(default_factory=dict)   # override OPCD fill colours
     grading: dict = field(default_factory=dict)      # -> GradingConfig
@@ -76,6 +77,7 @@ def load_config(path: str | Path) -> CourseConfig:
         imagery_res_m=float(img.get("resolution_m", 0.5)),
         layout_source=lay.get("source", "osm"),
         layout_file=lay.get("file", "features.geojson"),
+        layout_shift_m=tuple(float(v) for v in lay.get("shift_m", (0.0, 0.0))),
         tee_sets=list(c.get("tee_sets", ["Black", "Blue", "White", "Red"])),
         svg_colors=dict(raw.get("svg", {}).get("colors", {})),
         grading=dict(raw.get("grading", {})),

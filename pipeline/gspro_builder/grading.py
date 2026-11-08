@@ -4,7 +4,9 @@ Raw LiDAR is accurate to ~5-10 cm but noisy and blind under water. Each feature
 type gets the treatment a real course architect/superintendent would expect:
 
   fairways  light de-noise (keeps the real roll), feathered into rough
-  greens    de-noise that keeps contours; slope QA (putting surfaces > 3 % are flagged)
+  greens    shaped putting surface: smooth fit to the LiDAR (keeps the real tilt, crown/bowl
+            and softened broad undulations, drops LiDAR bumps), eased toward level until the
+            steepest 2 % of the green is <= green_max_slope (4 %), blended out through the collar
   tees      levelled pad: best-fit plane, cross-slope clamped to <= 1.5 %, optional raise
   bunkers   if LiDAR already shows the bowl it is kept (smoothed); otherwise carved to
             depth with a ramped face, plus a lip on the side facing the green
@@ -35,6 +37,10 @@ class GradingConfig:
     green_smooth_m: float = 0.6
     green_feather_m: float = 2.0
     green_slope_warn: float = 0.03
+    green_shape: bool = True           # shaped putting surface (False = smoothing only)
+    green_max_slope: float = 0.04      # steepest 2 % of a green after shaping
+    green_undulation: float = 0.5      # share of broad (> ~6 m) undulation kept on top of the fit
+    green_blend_m: float = 4.0         # change fades out over this distance beyond the green edge
     tee_max_slope: float = 0.015
     tee_raise_m: float = 0.0
     tee_feather_m: float = 3.0
@@ -64,6 +70,14 @@ class GradingResult:
     report: dict = field(default_factory=dict)
 
 
+def fit_plane_grad(a, m, res):
+    """(d/dx, d/dy) of the best-fit plane through a over mask m."""
+    yy, xx = np.nonzero(m)
+    A = np.c_[xx * res, yy * res, np.ones(len(xx))]
+    c, *_ = np.linalg.lstsq(A, a[m].astype(np.float64), rcond=None)
+    return c[0], c[1]
+
+
 def _gauss(a: np.ndarray, sigma_m: float, res: float) -> np.ndarray:
     from scipy import ndimage
     return ndimage.gaussian_filter(a, max(sigma_m / res, 1e-3), mode="nearest")
@@ -75,6 +89,58 @@ def _smooth_kind(a, inst, sigma_m, feather_m, res):
         return a
     w = feather_weight(mask, feather_m / res)
     return a * (1 - w) + _gauss(a, sigma_m, res) * w
+
+
+def _shape_greens(a, inst, cfg, res):
+    """Shaped putting surfaces (see module doc). Returns the new grid and per-green info."""
+    from scipy import ndimage
+    info = {}
+    n = a.shape[0]
+    pad = int(np.ceil(cfg.green_blend_m / res)) + 4
+    for i, sl in enumerate(ndimage.find_objects(inst), start=1):
+        if sl is None:
+            continue
+        r0, r1 = max(sl[0].start - pad, 0), min(sl[0].stop + pad, n)
+        c0, c1 = max(sl[1].start - pad, 0), min(sl[1].stop + pad, n)
+        m = inst[r0:r1, c0:c1] == i
+        if m.sum() < 20:
+            continue
+        z = a[r0:r1, c0:c1]
+        yy, xx = np.nonzero(m)
+        X, Y = xx * res, yy * res
+        mx, my = X.mean(), Y.mean()
+        X, Y = X - mx, Y - my
+        A = np.c_[np.ones_like(X), X, Y, X * X, X * Y, Y * Y]
+        keep = np.ones(len(X), bool)
+        for _ in range(3):                      # robust: ignore odd spots (sprinkler boxes, trees)
+            c, *_ = np.linalg.lstsq(A[keep], z[m][keep], rcond=None)
+            r = z[m] - A @ c
+            keep = np.abs(r) < 2.5 * max(r[keep].std(), 0.01)
+        gy, gx = np.mgrid[0:z.shape[0], 0:z.shape[1]]
+        GX, GY = gx * res - mx, gy * res - my
+        fit = c[0] + c[1] * GX + c[2] * GY + c[3] * GX * GX + c[4] * GX * GY + c[5] * GY * GY
+        resid = np.where(m, z - fit, 0.0)
+        w = ndimage.gaussian_filter(m.astype(float), 3.0 / res)
+        broad = ndimage.gaussian_filter(resid, 3.0 / res) / np.maximum(w, 1e-6)
+        shaped = fit + cfg.green_undulation * broad
+        # ease toward level until the steepest 2 % of the putting surface is within the limit
+        mean = shaped[m].mean()
+        k = 1.0
+        for _ in range(12):
+            t = mean + k * (shaped - mean)
+            ty, tx = np.gradient(t, res)
+            p98 = float(np.percentile(np.hypot(tx, ty)[m], 98))
+            if p98 <= cfg.green_max_slope:
+                break
+            k *= max(0.5, cfg.green_max_slope / p98 * 0.98)
+        t = mean + k * (shaped - mean)
+        # blend: the change inside the green carries out through the collar and fades
+        delta_in = np.where(m, t - z, 0.0)
+        d, (ir, ic) = ndimage.distance_transform_edt(~m, return_indices=True)
+        delta = delta_in[ir, ic] * (1 - smoothstep(d * res / cfg.green_blend_m))
+        a[r0:r1, c0:c1] = z + delta
+        info[i] = {"eased": round(1 - k, 2), "fit_rms_cm": round(float(r[keep].std()) * 100, 1)}
+    return a, info
 
 
 def grade(dem: DEM, layout: Layout, cfg: GradingConfig) -> GradingResult:
@@ -92,6 +158,9 @@ def grade(dem: DEM, layout: Layout, cfg: GradingConfig) -> GradingResult:
     # 1. fairways and greens: de-noise, feathered
     a = _smooth_kind(a, inst["fairway"], cfg.fairway_smooth_m, cfg.fairway_feather_m, res)
     a = _smooth_kind(a, inst["green"], cfg.green_smooth_m, cfg.green_feather_m, res)
+    shaped = {}
+    if cfg.green_shape:
+        a, shaped = _shape_greens(a, inst["green"], cfg, res)
 
     # 2. tees: levelled pads
     pad = int(np.ceil(cfg.tee_feather_m / res)) + 2
@@ -213,7 +282,10 @@ def grade(dem: DEM, layout: Layout, cfg: GradingConfig) -> GradingResult:
         if not m.any():
             continue
         sv = slope[m]
+        tilt = np.hypot(*fit_plane_grad(graded.data, m, res))
         rep["greens"].append({"hole": s.hole, "area_m2": round(float(m.sum()) * res * res),
+                              "tilt_pct": round(float(tilt) * 100, 2),
+                              "eased_toward_level": shaped.get(i + 1, {}).get("eased"),
                               "mean_slope_pct": round(float(sv.mean()) * 100, 2),
                               "max_slope_pct": round(float(np.percentile(sv, 98)) * 100, 2),
                               "pct_area_over_limit": round(float((sv > cfg.green_slope_warn).mean()) * 100, 1)})

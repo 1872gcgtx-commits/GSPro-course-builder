@@ -31,6 +31,8 @@ resolution_m = 0.5
 [layout]
 source = "osm"             # OpenStreetMap golf=* features; "geojson" to use only your file
 file = "features.geojson"  # your hand-traced additions/overrides (QGIS or geojson.io)
+shift_m = [1.0, -1.5]      # NAIP aerial -> LiDAR registration (scripts/estimate_shift.py):
+                           # greens/tees traced on the photo sit 1.0 m W, 1.5 m N of their pads
 
 [grading]                  # defaults shown; delete lines you don't change
 tee_max_slope = 0.015      # tee pads levelled to <= 1.5 %

@@ -109,6 +109,10 @@ def build(cfg: CourseConfig) -> dict:
 
     layout = load_layout(_layout_geojson(cfg), cfg.frame)
     log(f"layout: {len(layout.holes)} holes, {len(layout.surfaces)} surfaces")
+    if any(cfg.layout_shift_m):
+        from .layout import shift_traced
+        n = shift_traced(layout, *cfg.layout_shift_m)
+        log(f"layout: {n} traced shapes moved {cfg.layout_shift_m[0]:+.1f} m E, {cfg.layout_shift_m[1]:+.1f} m N onto the LiDAR")
 
     log("grading: fairways, greens, tees, bunkers, water")
     g = grade(raw_dem, layout, GradingConfig.from_dict(cfg.grading))
@@ -189,7 +193,15 @@ def build(cfg: CourseConfig) -> dict:
             warnings.append(f"hole {h['number']}: par estimated from yardage ({h['par']})")
     gcfg = GradingConfig.from_dict(cfg.grading)
     for gr in g.report.get("greens", []):
-        if gr["pct_area_over_limit"] > 25:
+        if gcfg.green_shape:
+            # shaped greens are always puttable; flag ones the shaping had to flatten a lot
+            # (outline probably runs onto a bank) or that still tilt hard overall
+            if (gr.get("eased_toward_level") or 0) > 0.5:
+                warnings.append(f"hole {gr['hole']} green: eased {gr['eased_toward_level']:.0%} toward level "
+                                f"to be puttable - check the green outline sits on the putting surface")
+            elif gr["tilt_pct"] > gcfg.green_max_slope * 100:
+                warnings.append(f"hole {gr['hole']} green tilts {gr['tilt_pct']}% overall")
+        elif gr["pct_area_over_limit"] > 25:
             warnings.append(f"hole {gr['hole']} green: {gr['pct_area_over_limit']}% steeper than "
                             f"{gcfg.green_slope_warn * 100:.0f}% - check LiDAR / layout alignment")
     if masks is not None:

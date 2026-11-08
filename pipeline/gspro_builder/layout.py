@@ -134,3 +134,20 @@ def _assign_holes(surfaces: list[Surface], holes: list[HoleLine], max_dist: floa
         if s.kind in ("tee", "fairway", "green", "bunker") or d <= max_dist / 2:
             if d <= max_dist or s.kind in ("tee", "green"):
                 s.hole = best.number
+
+
+def shift_traced(layout: Layout, dx: float, dz: float) -> int:
+    """Move shapes traced on the aerial photo (review-page surfaces and hole lines) by
+    (dx, dz) metres. Aerial imagery (NAIP: +/- several metres) and LiDAR (sub-metre) are
+    not perfectly registered; scripts/estimate_shift.py measures the offset by fitting
+    green and tee outlines onto their flat LiDAR pads. OSM/NHD features are left alone."""
+    if not (dx or dz):
+        return 0
+    mv = lambda pts: [(x + dx, z + dz) for x, z in pts]  # noqa: E731
+    n = 0
+    for s in layout.surfaces:
+        if (s.props or {}).get("source") == "review":
+            s.rings = [mv(r) for r in s.rings]; n += 1
+    for h in layout.holes:
+        h.path = mv(h.path); n += 1
+    return n
