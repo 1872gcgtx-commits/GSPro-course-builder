@@ -1,0 +1,20 @@
+{
+  "carries": "cart",
+  "edited": true,
+  "id": "umw7zq1vovq82",
+  "kind": "bridge",
+  "method": "manual",
+  "note": "",
+  "pts": [
+    [
+      -126.46,
+      221.68
+    ],
+    [
+      -155.62,
+      257.15
+    ]
+  ],
+  "updated": "2026-11-08T15:31:50.149Z",
+  "width": 3
+}
