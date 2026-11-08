@@ -38,6 +38,9 @@ bmodel = BunkerModel.from_shapes(H, owner_bunkers)
 gparams, gscore = tune_greens(H, owner_greens, clicks, bmodel)
 gmodel = GreenModel.from_shapes(H, [{'ring': r} for r in owner_greens.values()])
 gthr, grow_score = tune_grow(H, gmodel, owner_greens, clicks)
+def _area(r): return 0.5 * abs(sum(r[i][0] * r[(i + 1) % len(r)][1] - r[(i + 1) % len(r)][0] * r[i][1] for i in range(len(r))))
+median_green = float(np.median([_area(r) for r in owner_greens.values()]))
+print(f"  your median green: {median_green:.0f} m2")
 bthr, _ = tune_bunkers(H, bmodel, owner_bunkers, [np.mean(r, axis=0) for r in owner_greens.values()])
 
 # ---- redraft greens + bunkers on holes the owner hasn't touched
@@ -55,7 +58,7 @@ for n, h in todo:
     kk = key(n, h)
     if kk not in clicks:
         continue
-    m, area, win = trace_green_combo(H, *clicks[kk], gparams, bmodel, gmodel, gthr, gscore, grow_score)
+    m, area, win = trace_green_combo(H, *clicks[kk], gparams, bmodel, gmodel, gthr, gscore, grow_score, median_green)
     old_green = next((s for s in doc['shapes'] if s['nine'] == n and s['hole'] == h and s['kind'] == 'green'), None)
     if m is not None:
         ring = mask_to_ring(H, win, m, 24)

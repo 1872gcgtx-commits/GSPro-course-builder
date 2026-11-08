@@ -184,19 +184,22 @@ def _contrast(H, win, m, sigma):
     return edge[ring].mean() / max(edge[inner].mean() if inner.any() else 1e-3, 1e-3)
 
 
-def trace_green_combo(H, x, z, p, bunker_model, gmodel, gthr, ws_iou, grow_iou):
-    """Best of watershed (several radii) and colour growth, by boundary contrast,
-    weighted by each method's measured accuracy on the owner's greens."""
+def trace_green_combo(H, x, z, p, bunker_model, gmodel, gthr, ws_iou, grow_iou, median_area=400.0):
+    """Candidates: watershed (several radii) + colour growth at several thresholds.
+    Pick by mowing-line contrast x a size prior centred on the owner's median green
+    (rule chosen by leave-one-out scoring against the owner's greens)."""
     cands = []
     m, a, w = trace_green_best(H, x, z, p, bunker_model)
     if m is not None:
-        cands.append((m, a, w, ws_iou))
-    m, a, w = grow_green(H, x, z, gmodel, gthr)
-    if m is not None:
-        cands.append((m, a, w, grow_iou))
+        cands.append((m, a, w))
+    for t in sorted({gthr, 2.0, 2.5, 3.0, 3.5}):
+        m, a, w = grow_green(H, x, z, gmodel, t)
+        if m is not None:
+            cands.append((m, a, w))
     if not cands:
         return None, 0, None
-    scored = [(_contrast(H, w, m, p["sigma"]) * acc * min(1.0, a / 300.0), m, a, w) for m, a, w, acc in cands]
+    scored = [(_contrast(H, w, m, p["sigma"]) * math.exp(-abs(math.log(max(a, 1) / median_area))), m, a, w)
+              for m, a, w in cands]
     _, m, a, w = max(scored, key=lambda t: t[0])
     return m, a, w
 
