@@ -1,6 +1,6 @@
 """Procedural textures for the homes (no external assets).
 
-Walls tile every 3 m (one window bay per tile, one storey per tile height):
+Walls tile every 6 m along (a single window and a pair) and 3 m up (one storey):
 limestone ashlar, rustic stone, tan / red brick, stucco. Roofs tile every 4 m along
 the eave: asphalt shingles (per roof colour) and standing-seam metal. Plus front door,
 garage door, concrete (driveways), white trim and foundation stone.
@@ -46,6 +46,14 @@ def _window(dr, rng, x0=None):
 
 
 def wall(kind: str, seed: int = 0) -> Image.Image:
+    """6 m wide x 3 m tall: a single window and a pair, so facades don't repeat every bay."""
+    left = _wall_bay(kind, seed, None)
+    right = _wall_bay(kind, seed + 1, "pair")
+    im = Image.new("RGB", (2 * PX, PX)); im.paste(left, (0, 0)); im.paste(right, (PX, 0))
+    return im
+
+
+def _wall_bay(kind: str, seed: int, windows) -> Image.Image:
     rng = np.random.default_rng(seed)
     im = Image.new("RGB", (PX, PX)); dr = ImageDraw.Draw(im)
     if kind == "Home_Wall_Limestone":           # cream ashlar, random block lengths
@@ -82,7 +90,10 @@ def wall(kind: str, seed: int = 0) -> Image.Image:
         a = 222 + _noise(PX, 3, rng, 6) + _noise(PX, 20, rng, 5)
         arr = np.stack([a, a - 3, a - 10], -1).clip(0, 255).astype(np.uint8)
         im = Image.fromarray(arr); dr = ImageDraw.Draw(im)
-    _window(dr, rng)
+    if windows == "pair":
+        _window(dr, rng, PX / 2 - 0.68 * M); _window(dr, rng, PX / 2 + 0.68 * M)
+    else:
+        _window(dr, rng)
     return im.filter(ImageFilter.SMOOTH)
 
 
@@ -163,7 +174,7 @@ def write_textures(out_dir: Path, walls, roofs) -> dict:
     for i, r in enumerate(roofs):
         files[r] = f"{r}.png"; roof(r, i).save(out_dir / files[r])
     extra = {"Home_FrontDoor": front_door(), "Home_GarageDoor": garage_door(), "Home_Concrete": concrete(),
-             "Home_Trim": solid((238, 236, 230)), "Home_Foundation": wall("Home_Wall_Stone", 99).crop((0, 0, 512, 128))}
+             "Home_Trim": solid((238, 236, 230)), "Home_Foundation": _wall_bay("Home_Wall_Stone", 99, None).crop((0, 0, 512, 128))}
     for k, im in extra.items():
         files[k] = f"{k}.png"; im.save(out_dir / files[k])
     return files

@@ -469,12 +469,12 @@ def _mesh(home, cfg=None):
         a, b = ring[i], ring[(i + 1) % len(ring)]
         L = float(np.hypot(*(b - a)))
         n2 = np.array([(b - a)[1], -(b - a)[0]]) / max(L, 1e-6); n3 = np.array([n2[0], 0, n2[1]])
-        u0, u1 = along / 3, (along + L) / 3
+        u0, u1 = along / 6, (along + L) / 6               # wall texture: 6 m wide, 3 m tall
         mk.quad([_v3(a, g), _v3(b, g), _v3(b, top), _v3(a, top)],
                 [(u0, 0), (u1, 0), (u1, (top - g) / 3), (u0, (top - g) / 3)], home["wall"], n3)
         fa, fb = a + n2 * 0.03, b + n2 * 0.03
         mk.quad([_v3(fa, g), _v3(fb, g), _v3(fb, g + 0.7), _v3(fa, g + 0.7)],
-                [(u0, 0), (u1, 0), (u1, 0.93), (u0, 0.93)], "Home_Foundation", n3)
+                [(u0 * 2, 0), (u1 * 2, 0), (u1 * 2, 0.93), (u0 * 2, 0.93)], "Home_Foundation", n3)
         along += L
     parts = home.get("_parts", {})
     fe = home.get("front_edge", 0)
@@ -502,9 +502,9 @@ def _mesh(home, cfg=None):
         for i in range(4):
             q0, q1 = cs[i], cs[(i + 1) % 4]
             sd = (q0 + q1) / 2 - c; sd = sd / max(np.linalg.norm(sd), 1e-6)
-            w_ = float(np.linalg.norm(q1 - q0)) / 3
+            w_ = float(np.linalg.norm(q1 - q0)) / 6 * 0.3   # a window-free strip of the stone texture
             mk.quad([_v3(q0, y0), _v3(q1, y0), _v3(q1, y1), _v3(q0, y1)],
-                    [(0, 0), (w_, 0), (w_, (y1 - y0) / 3), (0, (y1 - y0) / 3)], "Home_Wall_Stone", np.array([sd[0], 0, sd[1]]))
+                    [(0.02, 0.62), (0.02 + w_, 0.62), (0.02 + w_, 0.62 + (y1 - y0) / 30), (0.02, 0.62 + (y1 - y0) / 30)], "Home_Wall_Stone", np.array([sd[0], 0, sd[1]]))
         mk.quad([_v3(q, y1) for q in cs], [(0, 0), (0.3, 0), (0.3, 0.3), (0, 0.3)], "Home_Trim", up)
     if "driveway" in parts:
         cl, hs = parts["driveway"]

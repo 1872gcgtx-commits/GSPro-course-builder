@@ -176,16 +176,31 @@ Each house gets:
 Footprints on greens, fairways, tees, bunkers or water are dropped, and trees standing
 inside a house lot are removed.
 
+Each house is dressed for its street. Streets come from OpenStreetMap
+(`fetch --only roads`). The wall facing the nearest street becomes the front:
+
+- a front door with a concrete step;
+- on most homes over 140 m², a 4.9 m garage door at one end of the front wall, with a
+  5.5 m concrete driveway draped on the terrain out to the street;
+- stone chimneys on about a third of the larger homes;
+- on every house: a white fascia board along the eaves, a soffit under the overhang,
+  and a stone foundation band.
+
+Walls use a 6 m × 3 m texture: a single window and a pair, one storey per 3 m, so
+two-storey homes get two rows of windows. Roof textures follow each roof face (shingle
+courses run along the eave), as asphalt shingle or standing-seam metal. All textures are
+drawn procedurally (`home_textures.py`), so there are no asset licences to worry about.
+
 The build writes the following to `output/homes/`:
 
-- `homes.obj` + `homes.mtl`: one object per 250 m tile (`Homes_##_##`) for culling, with
-  one sub-mesh per finish. Axes match `course_surfaces.obj`. Wall UVs are in 3 m units,
-  so a tiling facade texture with windows lines up storey by storey. Roof UVs are planar,
-  in 4 m units.
+- `homes.obj` + `homes.mtl` + textures: one object per 250 m tile (`Homes_##_##`) for
+  culling, with one sub-mesh per finish. Axes match `course_surfaces.obj`. About 200
+  triangles per house.
 - `homes.json`: one record per house (footprint, ground/eave/ridge heights, height
-  source, finishes).
+  source, finishes, front wall, garage, chimney).
 
-**Unity 6:**
+**Unity 6:** the importer's **Homes** option copies `output/homes` into the project and
+places it under the course root, turned like `course_surfaces.obj`. By hand:
 1. Import `homes.obj`. Use Scale 1 and the same rotation as `course_surfaces.obj`. Set
    Normals to Calculate with a 30° smoothing angle, so roof planes stay crisp.
 2. Remap the materials by name (`Home_Wall_*`, `Home_Roof_*`) to PBR materials. Use
