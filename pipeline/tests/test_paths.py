@@ -41,3 +41,21 @@ class Paths(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ReviewedPaths(unittest.TestCase):
+    def test_merge(self):
+        from gspro_builder.paths import lines_from_review, reviewed_lines
+        draft = {"lines": [{"id": "c0", "kind": "cart", "pts": [[0, 0], [10, 0]]},
+                           {"id": "c1", "kind": "cart", "pts": [[0, 5], [10, 5]]},
+                           {"id": "osm-1", "kind": "road", "road": "residential", "width": 8, "pts": [[0, 20], [50, 20]]}]}
+        edits = [{"id": "c0", "kind": "cart", "pts": [[0, 0], [5, 1], [10, 0]], "edited": True},
+                 {"id": "osm-1", "deleted": True},
+                 {"id": "uabc", "kind": "road", "road": "service", "width": 5, "pts": [[0, 30], [20, 30]], "method": "manual"}]
+        got = {l["id"]: l for l in reviewed_lines(draft, edits)}
+        self.assertEqual(set(got), {"c0", "c1", "uabc"})
+        self.assertEqual(len(got["c0"]["pts"]), 3)
+        self.assertEqual(set(l["id"] for l in reviewed_lines(draft, edits, only_mine=True)), {"c0", "uabc"})
+        cart, streets = lines_from_review(list(got.values()), (1.0, -1.5))
+        self.assertEqual(len(cart), 2); self.assertEqual(streets[0]["kind"], "service")
+        self.assertAlmostEqual(cart[1][0][0], 1.0)                 # shifted into the LiDAR frame

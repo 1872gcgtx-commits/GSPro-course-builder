@@ -142,14 +142,31 @@ def build(cfg: CourseConfig) -> dict:
     naip4_meta_ = json.loads((data / "naip4.json").read_text()) if naip4_ is not None else None
     if cfg.paths.get("enabled", True) and chm is not None and layout.holes:
         from .paths import cartpath_probability, route_cartpaths, street_items
-        osm_cp = [ln for k, ln in layout.paths if k == "cartpath" and len(ln) > 1]
-        Pcp, gcp = cartpath_probability(naip4_, naip4_meta_, osm_cp) if (naip4_ is not None and osm_cp) else (None, None)
-        log("cart paths: routing green -> tee and along each hole (aerial + mapped paths)")
-        cart_lines = route_cartpaths(layout, cfg.frame, chm, raw_dem.data,
-                                     masks["building"] if masks is not None else None,
-                                     masks["water"] if masks is not None else None, Pcp, gcp, cfg.layout_shift_m)
+        reviewed_draft = cfg.root / "draft_paths.json"
+        if reviewed_draft.exists():
+            # the owner's reviewed cart paths and roads (review page, Paths mode) replace routing
+            from .paths import lines_from_review, reviewed_lines
+            ed_dir = cfg.root / "path_edits"
+            edits = [json.loads(f_.read_text()) for f_ in sorted(ed_dir.glob("paths/*.json"))] if ed_dir.exists() else []
+            edits = [e_.get("data", e_) for e_ in edits]
+            meta_f = ed_dir / "meta" / "paths.json"
+            only_mine = bool(json.loads(meta_f.read_text()).get("data", json.loads(meta_f.read_text())).get("only_mine")) \
+                if meta_f.exists() else False
+            cart_lines, streets = lines_from_review(reviewed_lines(json.loads(reviewed_draft.read_text()), edits, only_mine),
+                                                    cfg.layout_shift_m)
+            log(f"cart paths + roads from the review page: {len(cart_lines)} cart path lines, {len(streets)} roads "
+                f"({len(edits)} edits by the owner{', only theirs' if only_mine else ''})")
+        else:
+            osm_cp = [ln for k, ln in layout.paths if k == "cartpath" and len(ln) > 1]
+            Pcp, gcp = cartpath_probability(naip4_, naip4_meta_, osm_cp) if (naip4_ is not None and osm_cp) else (None, None)
+            log("cart paths: routing green -> tee and along each hole (aerial + mapped paths)")
+            cart_lines = route_cartpaths(layout, cfg.frame, chm, raw_dem.data,
+                                         masks["building"] if masks is not None else None,
+                                         masks["water"] if masks is not None else None, Pcp, gcp, cfg.layout_shift_m)
         layout.paths = [p_ for p_ in layout.paths if p_[0] != "cartpath"] + [("cartpath", [tuple(q) for q in ln]) for ln in cart_lines]
-        if (data / "roads.geojson").exists():
+        if streets:
+            layout.paths += [(f"road:{st_['width']:g}", [tuple(q) for q in st_["line"]]) for st_ in streets]
+        elif (data / "roads.geojson").exists():
             streets = street_items(json.loads((data / "roads.geojson").read_text()), cfg.frame, naip4_, naip4_meta_,
                                    cfg.layout_shift_m)
             if cfg.boundary:                                   # streets around the course, not the whole tile
@@ -281,7 +298,7 @@ def build(cfg: CourseConfig) -> dict:
     if cart_lines or streets:
         from .paths import write_paths
         (out / "paths").mkdir(exist_ok=True)
-        paths_rep = write_paths(cart_lines, streets, dem, base, out / "paths", paths_water)
+        paths_rep = write_paths(cart_lines, streets, dem, base, out / "paths", paths_water, cfg.layout_shift_m)
         log(f"paths: {paths_rep.get('cart_path_km')} km cart path, {paths_rep.get('street_km')} km streets "
             f"({paths_rep['triangles']} triangles)")
 

@@ -209,6 +209,7 @@ def street_items(roads, frame, naip4=None, meta=None, shift=(0.0, 0.0)):
             if np.median(px[:, :3].mean(1)) > 0.52:
                 surface = "Road_Concrete"
         out.append({"line": ln, "width": ROAD_WIDTH[hw], "kind": hw, "surface": surface,
+                    "id": f"osm-{f['properties'].get('osm_id')}", "name": f["properties"].get("name"),
                     "curb": hw in ("residential", "tertiary", "secondary", "living_street"),
                     "centre_line": hw in ("tertiary", "secondary", "primary", "trunk")})
     return out
@@ -409,7 +410,54 @@ def path_textures(out_dir: Path) -> dict:
     return files
 
 
-def write_paths(cart_lines, streets, dem, base_elev, out_dir: Path, water=None) -> dict:
+def reviewed_lines(draft: dict, edits: list[dict], only_mine: bool = False):
+    """Draft lines (page frame) overlaid with the owner's saved edits: an edit replaces the
+    draft line with the same id, `deleted` removes it, new ids are added. With only_mine,
+    untouched draft cart paths are dropped."""
+    lines = {l["id"]: l for l in draft.get("lines", []) if not (only_mine and l["kind"] == "cart")}
+    for e in edits:
+        if not e.get("id"):
+            continue
+        if e.get("deleted"):
+            lines.pop(e["id"], None)
+        elif len(e.get("pts", [])) >= 2:
+            lines[e["id"]] = e
+    return list(lines.values())
+
+
+def lines_from_review(lines, shift, surface_of=None):
+    """Reviewed lines -> (cart lines in the LiDAR frame, street items). Hand-drawn lines are
+    rounded a little at the corners so paths curve the way they're poured."""
+    cart, streets = [], []
+    for l in lines:
+        pts = np.asarray(l["pts"], float)
+        if l["kind"] == "cart":
+            q = pts + np.asarray(shift)                     # page/photo -> LiDAR frame, like traced shapes
+            cart.append(_chaikin(q, 2) if (l.get("method") == "manual" or l.get("edited")) and len(q) > 2 else q)
+        else:
+            road = l.get("road") or l.get("highway") or "residential"
+            streets.append({"line": pts, "width": float(l.get("width") or ROAD_WIDTH.get(road, 8.0)), "kind": road,
+                            "surface": l.get("surface") or "Road_Asphalt", "id": l["id"], "name": l.get("name"),
+                            "curb": road in ("residential", "tertiary", "secondary", "living_street"),
+                            "centre_line": road in ("tertiary", "secondary", "primary", "trunk")})
+    return cart, streets
+
+
+def draft_from_build(cart_lines, streets, shift) -> dict:
+    """Lines for the review page (page/photo frame), from a build."""
+    out = [{"id": f"c{i}", "kind": "cart", "pts": [[round(float(x - shift[0]), 2), round(float(z - shift[1]), 2)] for x, z in
+                                                  np.asarray(ln)[::2].tolist() + [list(np.asarray(ln)[-1])]],
+            "method": "traced"} for i, ln in enumerate(cart_lines)]
+    for st in streets:
+        out.append({"id": st.get("id") or f"r{len(out)}", "kind": "road", "road": st["kind"], "width": st["width"],
+                    "surface": st["surface"], "name": st.get("name"), "method": "osm",
+                    "pts": [[round(float(x), 2), round(float(z), 2)] for x, z in np.asarray(st["line"])]})
+    return {"lines": out}
+
+
+def write_paths(cart_lines, streets, dem, base_elev, out_dir: Path, water=None, shift=(0.0, 0.0)) -> dict:
+    import json as _json
+    (out_dir / "lines.json").write_text(_json.dumps(draft_from_build(cart_lines, streets, shift)))
     files = path_textures(out_dir)
     with open(out_dir / "paths.mtl", "w") as f:
         for k, fn in files.items():
