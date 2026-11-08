@@ -337,3 +337,41 @@ def draft_v3(cfg, holes, reviewed_shapes, train_nines=(1,), log=print):
                       [[round(x, 1), round(z, 1)] for x, z in h.path] for h in todo}
     log(f"  drafted {len(out)} shapes")
     return out
+
+
+def creek_banks(cfg, G, aux, profile, max_half_m=30.0, log=print):
+    """Bank-following creek polygon from a thalweg + water-surface profile.
+
+    Water = ground below the local water surface, connected to the thalweg, plus
+    LiDAR water returns and open water seen in NIR, inside the creek corridor.
+    A 4 m thread along the thalweg guarantees one continuous shape.
+    """
+    from scipy.spatial import cKDTree
+    P = np.asarray(profile, float)                        # x, z, surface (every ~10 m)
+    # densify the thalweg to 1 m
+    seg = np.linalg.norm(np.diff(P[:, :2], axis=0), axis=1)
+    cum = np.concatenate([[0], np.cumsum(seg)])
+    t = np.arange(0, cum[-1], 1.0)
+    th = np.column_stack([np.interp(t, cum, P[:, 0]), np.interp(t, cum, P[:, 1]), np.interp(t, cum, P[:, 2])])
+    corridor = _line_mask(G, th[:, :2].tolist(), max_half_m)
+    rr, cc = np.nonzero(corridor)
+    xs = -G.frame.size_m / 2 + (cc + G.c0 + 0.5) * G.res
+    zs = G.frame.size_m / 2 - (rr + G.r0 + 0.5) * G.res
+    _, j = cKDTree(th[:, :2]).query(np.column_stack([xs, zs]))
+    level = np.full(G.shape, -1e9, np.float32)
+    level[rr, cc] = th[j, 2] + 0.2
+    wet = corridor & (aux["dem"] <= level)
+    wet |= corridor & ndimage.binary_opening(aux["lw"], iterations=1)
+    wet |= corridor & (aux["ndvi"] < -0.02) & (aux["bri"] < 90) & (aux["chm"] < 1)
+    thread = _line_mask(G, th[:, :2].tolist(), 2.0)
+    wet = ndimage.binary_closing(wet | thread, iterations=3)
+    wet = ndimage.binary_opening(wet, iterations=2) | thread
+    lab, n = ndimage.label(wet)
+    keep = np.unique(lab[thread])
+    wet = np.isin(lab, keep[keep > 0])
+    wet = ndimage.binary_fill_holes(wet)
+    wet = _smooth_mask(wet, 3.0) | thread
+    ring = styled_ring(wet, G, min(600, max(80, int(cum[-1] / 6))), 2.0)
+    area = wet.sum() * G.res ** 2
+    log(f"  creek banks: {area:,.0f} m2 over {cum[-1]:.0f} m (mean width {area / max(cum[-1], 1):.1f} m)")
+    return ring
