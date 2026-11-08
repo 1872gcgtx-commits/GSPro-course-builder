@@ -51,11 +51,20 @@ def in_creek(pts):
     return _pir(np.asarray(pts), creek_ring).mean() > 0.2 or _dist_to_ring(np.asarray(pts), creek_ring) < 10
 negpath = cfg.root / 'negatives.json'
 negs = [(it['x'], it['z']) for it in json.loads(negpath.read_text())['items'] if it['kind'] == 'not_bunker'] if negpath.exists() else []
-# every draft bunker the owner deleted in the review page is also a "not a bunker" example
-negs += [tuple(np.mean(e['ring'], axis=0)) for e in edits if e.get('deleted') and e.get('kind') == 'bunker' and e.get('ring')]
+# a draft bunker the owner deleted (and did not redraw nearby) is a "not a bunker" spot;
+# deletions that were replaced by the owner's own bunker are real sand, so they are ignored
+owner_b_centres = [np.mean(b['ring'], axis=0) for b in owner_bunkers]
+del_negs = []
+for e in edits:
+    if e.get('deleted') and e.get('kind') == 'bunker' and e.get('ring'):
+        c = np.mean(e['ring'], axis=0)
+        if all(math.dist(c, ob) > 6 for ob in owner_b_centres):
+            del_negs.append(tuple(c))
+print(f"  deleted draft bunkers used as 'not a bunker' spots: {len(del_negs)}")
 from gspro_builder.finetrace import neg_model_from_points
-nmodel = neg_model_from_points(H, negs)
+nmodel = neg_model_from_points(H, negs)          # colour model: explicit X marks only
 print(f"  'not a bunker' marks from you: {len(negs)}")
+negs = negs + del_negs                          # location exclusions: marks + unreplaced deletions
 gkeys = list(owner_greens)
 fw_by = {i: [s['ring'] for s in final if s['kind'] == 'fairway' and key(s['nine'], s['hole']) == k] for i, k in enumerate(gkeys)}
 bthr, _ = tune_bunkers(H, bmodel, owner_bunkers, [np.mean(owner_greens[k], axis=0) for k in gkeys],
