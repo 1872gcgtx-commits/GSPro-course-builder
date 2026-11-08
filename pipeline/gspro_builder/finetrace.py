@@ -128,6 +128,22 @@ def trace_green(H: Hires, x, z, p, bunker_model=None):
     return m, area, win
 
 
+def neg_model_from_points(H, points, radius_m=4.0):
+    """Colour model of places the owner said are NOT bunkers (pixels near each mark)."""
+    px = []
+    for x, z in points:
+        win = H.window(x, z, radius_m + 1)
+        img = win["img"]
+        br = img[..., :3].mean(-1)
+        px.append(img[br > np.percentile(br, 50)][:, :4])
+    if not px:
+        return None
+    P = np.concatenate(px)
+    if len(P) < 20:
+        return None
+    return BunkerModel(P.mean(0), np.cov(P.T))
+
+
 class GreenModel(BunkerModel):
     """Colour/NIR statistics of the owner's greens."""
 
@@ -271,7 +287,8 @@ def tune_greens(H, owner_greens, clicks, bunker_model=None, log=print):
     return best, best_score
 
 
-def find_bunkers(H, near_x, near_z, model, thr, radius=45.0, exclude=None, bowl_max=0.02, green=None, fairways=(), hazard=None):
+def find_bunkers(H, near_x, near_z, model, thr, radius=45.0, exclude=None, bowl_max=0.02, green=None, fairways=(), hazard=None,
+                 negatives=(), neg_model=None):
     """Bunkers around a green/fairway point: tan colour model + LiDAR depression."""
     win = H.window(near_x, near_z, radius)
     img = win["img"]
@@ -308,6 +325,13 @@ def find_bunkers(H, near_x, near_z, model, thr, radius=45.0, exclude=None, bowl_
             continue
         if hazard is not None and hazard(pts):
             continue                                 # creek bed gravel
+        c = pts.mean(0)
+        if any(math.hypot(c[0] - nx, c[1] - nz) < 8 for nx, nz in negatives):
+            continue                                 # the owner said: not a bunker
+        if neg_model is not None:
+            px4 = img[sl][m][:, :4]
+            if np.median(neg_model.dist(px4)) < np.median(model.dist(px4)):
+                continue                             # looks more like the owner's rejections than their bunkers
         ev = np.linalg.eigvalsh(np.cov(np.vstack([rr, cc]))) if len(rr) > 3 else [1, 1]
         if d_green > 6 and ev[0] / max(ev[1], 1e-6) < 0.09:   # sliver away from the green = path edge
             continue
@@ -345,7 +369,8 @@ def _dist_to_ring(pts, ring):
     return float(best)
 
 
-def tune_bunkers(H, model, owner_bunkers, green_points, log=print, greens=None, fairways=None, hazard=None):
+def tune_bunkers(H, model, owner_bunkers, green_points, log=print, greens=None, fairways=None, hazard=None,
+                 negatives=(), neg_model=None):
     """Pick the colour threshold that best reproduces the owner's bunkers near their greens."""
     best, best_f = (3.0, 0.02), -1
     for thr, bowl_max in itertools.product((1.5, 2.0, 2.5, 3.0, 4.0), (0.02, -0.02, -0.05)):
@@ -353,7 +378,11 @@ def tune_bunkers(H, model, owner_bunkers, green_points, log=print, greens=None, 
         for i, (gx, gz) in enumerate(green_points):
             g = greens[i] if greens else None
             found = find_bunkers(H, gx, gz, model, thr, bowl_max=bowl_max, green=g,
-                                 fairways=(fairways or {}).get(i, ()), hazard=hazard)
+                                 fairways=(fairways or {}).get(i, ()), hazard=hazard, neg_model=neg_model)
+            # the owner's "not a bunker" marks count as false positives if found
+            found_neg = [f for f in found if any(math.dist(np.mean(f["ring"], axis=0), q) < 8 for q in negatives)]
+            fp += len(found_neg)
+            found = [f for f in found if f not in found_neg]
             truth = [b for b in owner_bunkers if math.dist(np.mean(b["ring"], axis=0), (gx, gz)) < 45]
             used = set()
             for f in found:

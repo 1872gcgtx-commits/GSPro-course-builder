@@ -49,10 +49,18 @@ def in_creek(pts):
     if creek_ring is None: return False
     from gspro_builder.finetrace import _dist_to_ring
     return _pir(np.asarray(pts), creek_ring).mean() > 0.2 or _dist_to_ring(np.asarray(pts), creek_ring) < 10
+negpath = cfg.root / 'negatives.json'
+negs = [(it['x'], it['z']) for it in json.loads(negpath.read_text())['items'] if it['kind'] == 'not_bunker'] if negpath.exists() else []
+# every draft bunker the owner deleted in the review page is also a "not a bunker" example
+negs += [tuple(np.mean(e['ring'], axis=0)) for e in edits if e.get('deleted') and e.get('kind') == 'bunker' and e.get('ring')]
+from gspro_builder.finetrace import neg_model_from_points
+nmodel = neg_model_from_points(H, negs)
+print(f"  'not a bunker' marks from you: {len(negs)}")
 gkeys = list(owner_greens)
 fw_by = {i: [s['ring'] for s in final if s['kind'] == 'fairway' and key(s['nine'], s['hole']) == k] for i, k in enumerate(gkeys)}
 bthr, _ = tune_bunkers(H, bmodel, owner_bunkers, [np.mean(owner_greens[k], axis=0) for k in gkeys],
-                       greens=[owner_greens[k] for k in gkeys], fairways=fw_by, hazard=in_creek)
+                       greens=[owner_greens[k] for k in gkeys], fairways=fw_by, hazard=in_creek,
+                       negatives=negs, neg_model=nmodel)
 
 # ---- redraft greens + bunkers on holes the owner hasn't touched
 lay = load_layout(cfg.data_dir / 'osm.geojson', cfg.frame)
@@ -82,7 +90,7 @@ for n, h in todo:
     gring = new_shapes[-1]['ring'] if new_shapes and new_shapes[-1]['kind'] == 'green' and new_shapes[-1]['hole'] == h and new_shapes[-1]['nine'] == n else None
     fws = [s['ring'] for s in doc['shapes'] if s['nine'] == n and s['hole'] == h and s['kind'] == 'fairway']
     for i, b in enumerate(find_bunkers(H, gx, gz, bmodel, bthr[0], exclude=on_cart, bowl_max=bthr[1],
-                                       green=gring, fairways=fws, hazard=in_creek)):
+                                       green=gring, fairways=fws, hazard=in_creek, negatives=negs, neg_model=nmodel)):
         new_shapes.append({"id": f"v4-{kk}-bunker-{i}", "nine": n, "hole": h, "kind": "bunker", "method": "traced",
                            "conf": 0.8 if b['bowl'] < -0.08 else 0.6, "ring": b['ring']})
         changed['bunkers'] += 1

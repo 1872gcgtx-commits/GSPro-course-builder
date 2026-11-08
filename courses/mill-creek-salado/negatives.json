@@ -1,0 +1,12 @@
+{
+ "note": "Owner corrections: places that are NOT the given surface. Used by relearn.",
+ "items": [
+  {
+   "x": -653.3,
+   "z": 543.1,
+   "kind": "not_bunker",
+   "from": "owner X on bunker check image",
+   "added": "2026-11-08"
+  }
+ ]
+}
