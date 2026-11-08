@@ -114,6 +114,33 @@ def trim(fw, green):
     per=float(np.sum(np.linalg.norm(np.diff(np.vstack([pts,pts[:1]]),axis=0),axis=1)))
     pts=resample_ring(chaikin(resample_ring(pts,max(120,int(per/2))),2),max(40,int(per/5)))
     return [[round(float(a),1),round(float(b),1)] for a,b in pts]
+# a green never overlaps a bunker: cut detected bunkers (+0.5 m) out of redrafted greens
+def cut_out(ring, holes_rings):
+    xs=[p[0] for r in [ring]+holes_rings for p in r]; zs=[p[1] for r in [ring]+holes_rings for p in r]
+    x0,z1=min(xs)-3,max(zs)+3; W=int((max(xs)+3-x0)/0.25); Hh=int((z1-min(zs)+3)/0.25)
+    def ras(r):
+        im=Image.new('L',(W,Hh),0); ImageDraw.Draw(im).polygon([((x-x0)/0.25,(z1-z)/0.25) for x,z in r],fill=1); return np.asarray(im,bool)
+    from scipy import ndimage as ndi
+    g=ras(ring); b=np.zeros_like(g)
+    for r in holes_rings: b|=ras(r)
+    if not (g&b).any(): return ring, False
+    m=g&~ndi.binary_dilation(b,iterations=2)
+    lab,n=ndi.label(m)
+    if n==0: return ring, False
+    m=lab==1+int(np.argmax(ndi.sum(m,lab,range(1,n+1))))
+    m=ndi.gaussian_filter(m.astype(float),2)>0.5
+    c=max(find_contours(np.pad(m.astype(float),1),0.5),key=len)
+    pts=np.array([(x0+(cc-1+0.5)*0.25, z1-(rr-1+0.5)*0.25) for rr,cc in c])
+    pts=resample_ring(chaikin(resample_ring(pts,120),2),28)
+    return [[round(float(a),1),round(float(b),1)] for a,b in pts], True
+cut=0
+for s in new_shapes:
+    k=(s['nine'],s['hole'])
+    if s['kind']=='green' and k not in touched and key(*k) not in reviewed:
+        bs=[b['ring'] for b in new_shapes if b['kind']=='bunker' and (b['nine'],b['hole'])==k]
+        s['ring'], did = cut_out(s['ring'], bs)
+        cut += did
+print('greens with bunkers cut out:', cut)
 greens={(s['nine'],s['hole']):s['ring'] for s in new_shapes if s['kind']=='green'}
 for s in new_shapes:
     k=(s['nine'],s['hole'])

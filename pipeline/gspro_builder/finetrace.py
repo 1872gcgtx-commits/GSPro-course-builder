@@ -132,7 +132,7 @@ class GreenModel(BunkerModel):
     """Colour/NIR statistics of the owner's greens."""
 
 
-def grow_green(H, x, z, gmodel, t, radius=34.0, area_rng=(150, 1400)):
+def grow_green(H, x, z, gmodel, t, radius=34.0, area_rng=(150, 1400), bunker_model=None):
     win = H.window(x, z, radius + 4)
     img = ndimage.gaussian_filter(win["img"], (2, 2, 0))
     d = gmodel.dist(img)
@@ -140,7 +140,15 @@ def grow_green(H, x, z, gmodel, t, radius=34.0, area_rng=(150, 1400)):
     cr, cc = H.to_rc(win, x, z)
     yy, xx = np.mgrid[0:hh, 0:ww]
     inside = (np.hypot(yy - cr, xx - cc) * H.res < radius) & (win["chm"] < 1.5)
-    m = (d < t) & inside
+    # greens never run into sand: learned bunker colour or bright unvegetated ground
+    raw = win["img"]
+    br = raw[..., :3].mean(-1)
+    ndv = (raw[..., 3] - raw[..., 0]) / (raw[..., 3] + raw[..., 0] + 1e-3)
+    sand = (br > np.median(br) + 35) & (ndv < 0.05)
+    if bunker_model is not None:
+        sand |= (bunker_model.dist(raw) < 1.5) & (ndv < 0.12)
+    sand = ndimage.binary_dilation(ndimage.binary_opening(sand, iterations=2), iterations=2)
+    m = (d < t) & inside & ~sand
     m = ndimage.binary_opening(m, iterations=int(1.0 / H.res))
     lab, n = ndimage.label(m)
     if n == 0 or not (0 <= cr < hh and 0 <= cc < ww):
@@ -193,7 +201,7 @@ def trace_green_combo(H, x, z, p, bunker_model, gmodel, gthr, ws_iou, grow_iou, 
     if m is not None:
         cands.append((m, a, w))
     for t in sorted({gthr, 2.0, 2.5, 3.0, 3.5}):
-        m, a, w = grow_green(H, x, z, gmodel, t)
+        m, a, w = grow_green(H, x, z, gmodel, t, bunker_model=bunker_model)
         if m is not None:
             cands.append((m, a, w))
     if not cands:
